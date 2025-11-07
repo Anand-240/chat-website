@@ -6,10 +6,9 @@ export default function ChatBox({ messages, meId }) {
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
-
   return (
     <div ref={listRef} className="flex-1 overflow-y-auto bg-white">
-      <div className="px-4 py-6 space-y-2">
+      <div className="px-6 py-6 space-y-2">
         {messages.map((m) => (
           <MessageBubble key={m._id || `${m.sender}-${m.createdAt}`} msg={m} meId={meId} />
         ))}

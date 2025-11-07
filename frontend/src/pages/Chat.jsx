@@ -37,11 +37,8 @@ export default function Chat() {
         }));
         setConvos(mapped);
         const saved = localStorage.getItem(activeKey(meId));
-        if (saved && mapped.some((c) => String(c.id) === String(saved))) {
-          setReceiverId(saved);
-        } else if (!receiverId && mapped.length) {
-          setReceiverId(String(mapped[0].id));
-        }
+        if (saved && mapped.some((c) => String(c.id) === String(saved))) setReceiverId(saved);
+        else if (!receiverId && mapped.length) setReceiverId(String(mapped[0].id));
       } catch {}
     })();
   }, [token]);
@@ -62,14 +59,9 @@ export default function Chat() {
         const p = [...prev];
         const idx = p.findIndex((c) => String(c.id) === String(other));
         const preview = msg.text ? msg.text : "Image";
-        if (idx < 0) {
-          p.unshift({ id: other, preview, time: now, unread: show ? 0 : 1 });
-          return p;
-        }
+        if (idx < 0) { p.unshift({ id: other, preview, time: now, unread: show ? 0 : 1 }); return p; }
         const row = { ...p[idx], preview, time: now, unread: show ? 0 : (p[idx].unread || 0) + (String(msg.sender) !== meId ? 1 : 0) };
-        p.splice(idx, 1);
-        p.unshift(row);
-        return p;
+        p.splice(idx, 1); p.unshift(row); return p;
       });
     };
     socket.on("new_message", onNew);
@@ -86,10 +78,7 @@ export default function Chat() {
         const { data } = await api(token).get(`/chat/${receiverId}`);
         setMessages(data);
         setConvos((prev) => prev.map((c) => (String(c.id) === String(receiverId) ? { ...c, unread: 0 } : c)));
-      } catch {
-      } finally {
-        loadingRef.current = false;
-      }
+      } catch {} finally { loadingRef.current = false; }
     })();
   }, [receiverId, token, meId]);
 
@@ -102,20 +91,14 @@ export default function Chat() {
       setReceiverId(id);
       setReceiverInput("");
       setMessages([]);
-      setConvos((prev) => {
-        if (prev.some((c) => String(c.id) === String(id))) return prev;
-        return [{ id, username, email, preview: "", time: "", unread: 0 }, ...prev];
-      });
+      setConvos((prev) => (prev.some((c) => String(c.id) === String(id)) ? prev : [{ id, username, email, preview: "", time: "", unread: 0 }, ...prev]));
     } catch {
       alert("User not found. Please enter a registered username or email.");
     }
   }
 
   async function handleSend({ text, file }) {
-    if (!isOid(receiverId)) {
-      alert("Select a valid user first.");
-      return;
-    }
+    if (!isOid(receiverId)) { alert("Select a valid user first."); return; }
     let imageUrl;
     if (file) {
       const form = new FormData();
@@ -134,52 +117,60 @@ export default function Chat() {
       const p = [...prev];
       const idx = p.findIndex((c) => String(c.id) === String(receiverId));
       const preview = text ? text : "Image";
-      if (idx < 0) { p.unshift({ id: receiverId, preview, time: now, unread: 0 }); return p; }
+      if (idx < 0) { p.unshift({ id: receiverId, username: receiverId, preview, time: now, unread: 0 }); return p; }
       const row = { ...p[idx], preview, time: now, unread: 0 };
-      p.splice(idx, 1);
-      p.unshift(row);
-      return p;
+      p.splice(idx, 1); p.unshift(row); return p;
     });
 
     socket?.emit("send_message", { receiverId, text, imageUrl, _clientId });
   }
 
   function handleKey(e) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      applyReceiver();
-    }
+    if (e.key === "Enter") { e.preventDefault(); applyReceiver(); }
   }
 
   return (
-    <div className="h-full max-w-[1200px] mx-auto p-4 grid" style={{ gridTemplateColumns: "320px 1fr", gap: "16px" }}>
-      <Sidebar me={{ username: user?.username, email: user?.email }} items={convos} activeId={receiverId} onSelect={(id) => setReceiverId(id)} />
-      <div className="h-full bg-white rounded-3xl border border-(--border) overflow-hidden flex flex-col">
-        <div className="px-6 py-4 border-b border-(--border) flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-lg font-semibold">{receiverId ? "Chat" : "Start a chat"}</div>
-            {user && <div className="text-xs text-[#667085]">{user.username}</div>}
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              className="rounded-xl border border-(--border) bg-[#0f1218] px-3 py-2 text-[14px] text-white/90 placeholder:text-[#70778a] outline-none focus:ring-2 focus:ring-(--accent2)/30 w-72"
-              placeholder="username / email"
-              value={receiverInput}
-              onChange={(e) => setReceiverInput(e.target.value)}
-              onKeyDown={handleKey}
-            />
-            <button onClick={applyReceiver} className="rounded-xl px-4 py-2 bg-(--primary) text-white text-sm font-medium">Start</button>
-            <button onClick={logout} className="rounded-xl px-4 py-2 text-sm bg-[#f4f5f9]">Logout</button>
-          </div>
+    <div className="h-screen w-full overflow-hidden bg-white">
+      <div className="grid h-full w-full" style={{ gridTemplateColumns: "360px 1fr" }}>
+        <div className="min-h-0">
+          <Sidebar
+            me={{ username: user?.username, email: user?.email }}
+            items={convos}
+            activeId={receiverId}
+            onSelect={(id) => setReceiverId(id)}
+          />
         </div>
-        {!receiverId ? (
-          <div className="flex-1 grid place-items-center text-[#667085] text-sm">Type a registered username or email to start</div>
-        ) : (
-          <>
-            <ChatBox messages={messages} meId={meId} />
-            <Composer onSend={handleSend} />
-          </>
-        )}
+        <div className="h-full min-h-0 w-full bg-white border-l border-(--border) flex flex-col">
+          <div className="px-6 h-16 border-b border-(--border) flex items-center justify-between shrink-0">
+            <div className="min-w-0">
+              <div className="text-base font-semibold truncate">{receiverId ? "Chat" : "Start a chat"}</div>
+              {user && <div className="text-[12px] text-[#667085] truncate">{user.username}</div>}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                className="rounded-xl border border-(--border) bg-[#0f1218] px-3 py-2 text-[14px] text-white/90 placeholder:text-[#70778a] outline-none focus:ring-2 focus:ring-(--accent2)/30 w-80"
+                placeholder="username / email"
+                value={receiverInput}
+                onChange={(e) => setReceiverInput(e.target.value)}
+                onKeyDown={handleKey}
+              />
+              <button onClick={applyReceiver} className="rounded-xl px-4 py-2 bg-(--primary) hover:opacity-90 transition text-white text-sm font-medium">Start</button>
+              <button onClick={logout} className="rounded-xl px-4 py-2 text-sm bg-[#f4f5f9] hover:bg-[#eceff5] transition">Logout</button>
+            </div>
+          </div>
+          {!receiverId ? (
+            <div className="flex-1 grid place-items-center text-[#667085] text-sm min-h-0">Type a registered username or email to start</div>
+          ) : (
+            <div className="flex-1 min-h-0 flex flex-col bg-white">
+              <div className="flex-1 overflow-y-auto">
+                <ChatBox messages={messages} meId={meId} />
+              </div>
+              <div className="border-t border-(--border) mt-0">
+                <Composer onSend={handleSend} />
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

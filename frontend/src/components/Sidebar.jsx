@@ -12,9 +12,7 @@ export default function Sidebar({ me, items = [], activeId, onSelect }) {
           </div>
         </div>
       </div>
-
       <div className="px-3 py-2 text-xs text-[#98a2b3]">All chats</div>
-
       <div className="flex-1 overflow-y-auto p-2">
         {items.map((c) => (
           <button
@@ -39,9 +37,7 @@ export default function Sidebar({ me, items = [], activeId, onSelect }) {
             ) : null}
           </button>
         ))}
-        {!items.length && (
-          <div className="px-3 py-4 text-sm text-[#98a2b3]">No conversations yet</div>
-        )}
+        {!items.length && <div className="px-3 py-4 text-sm text-[#98a2b3]">No conversations yet</div>}
       </div>
     </div>
   );

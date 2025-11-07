@@ -1,40 +1,45 @@
-import { createContext, useContext, useEffect, useState } from "react";
-import { jwtDecode } from "jwt-decode";
-
-import { getToken as getStoredToken, clearToken } from "../store.js";
+import React, { createContext, useContext, useEffect, useState } from "react";
 
 const AuthContext = createContext();
 
-export const AuthProvider = ({ children }) => {
-  const [token, setToken] = useState(getStoredToken());
-  const [user, setUser] = useState(null);
-
-  useEffect(() => {
-    if (!token) {
-      setUser(null);
-      return;
-    }
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(() => {
     try {
-      const d = jwtDecode(token);
-      setUser({ id: d.id, username: d.username, email: d.email });
+      return JSON.parse(localStorage.getItem("user") || "null");
     } catch {
-      clearToken();
-      setToken(null);
-      setUser(null);
+      return null;
     }
-  }, [token]);
+  });
 
-  const logout = () => {
-    clearToken();
+  const [token, setToken] = useState(() => localStorage.getItem("token"));
+
+  function setAuth(token, user) {
+    setToken(token);
+    setUser(user);
+    localStorage.setItem("token", token);
+    localStorage.setItem("user", JSON.stringify(user));
+  }
+
+  function logout() {
     setToken(null);
     setUser(null);
-  };
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+  }
+
+  useEffect(() => {
+    if (!token || !user) {
+      logout();
+    }
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, setToken, logout }}>
+    <AuthContext.Provider value={{ user, token, setAuth, logout }}>
       {children}
     </AuthContext.Provider>
   );
-};
+}
 
-export const useAuth = () => useContext(AuthContext);
+export function useAuth() {
+  return useContext(AuthContext);
+}

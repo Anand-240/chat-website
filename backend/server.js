@@ -1,6 +1,6 @@
+import "dotenv/config";
 import express from "express";
-import dotenv from "dotenv";
-import morgan from "morgan";
+import cors from "cors";
 import http from "http";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -10,47 +10,27 @@ import chatRoutes from "./routes/chatRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 import { setupSocket } from "./socket/socket.js";
 
-dotenv.config();
-
 const app = express();
 const server = http.createServer(app);
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-connectDB(process.env.MONGO_URI);
+await connectDB();
 
-const allowlist = new Set([
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-  "http://localhost:5174",
-  "http://127.0.0.1:5174"
-]);
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin && allowlist.has(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  }
-  if (req.method === "OPTIONS") {
-    return res.status(204).end();
-  }
-  next();
-});
+app.use(cors({ origin: process.env.CLIENT_ORIGIN || "http://localhost:5173", credentials: true }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
 
-app.use(express.json());
-app.use(morgan("dev"));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-app.use("/uploads", express.static(path.join(__dirname, "uploads", "images")));
 app.use("/api/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/upload", uploadRoutes);
 
-app.get("/", (req, res) => res.send("Chat API running"));
+setupSocket(server, process.env.CLIENT_ORIGIN || "http://localhost:5173");
 
-setupSocket(server, process.env.CLIENT_URL || "http://localhost:5173");
-
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+const PORT = process.env.PORT || 5001;
+server.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});

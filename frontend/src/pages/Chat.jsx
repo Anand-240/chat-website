@@ -120,7 +120,7 @@ export default function Chat() {
     if (file) {
       const form = new FormData();
       form.append("image", file);
-      const { data } = await api(token).post("/api/upload", form, { headers: { "Content-Type": "multipart/form-data" } });
+      const { data } = await api(token).post("/upload", form, { headers: { "Content-Type": "multipart/form-data" } });
       imageUrl = data.url;
     }
     if (!text && !imageUrl) return;

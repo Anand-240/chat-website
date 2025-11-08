@@ -4,6 +4,8 @@ import mongoose from "mongoose";
 import Message from "../models/messageModel.js";
 import User from "../models/userModel.js";
 import Conversation from "../models/conversationModel.js";
+import Group from "../models/groupModel.js";
+import GroupMessage from "../models/groupMessageModel.js";
 
 export function setupSocket(httpServer, corsOrigin) {
   const io = new Server(httpServer, { cors: { origin: corsOrigin, credentials: true } });
@@ -23,6 +25,11 @@ export function setupSocket(httpServer, corsOrigin) {
     const userId = String(socket.user.id);
     socket.join(userId);
 
+    socket.on("join_groups", async () => {
+      const groups = await Group.find({ members: userId }).select("_id").lean();
+      groups.forEach((g) => socket.join(String(g._id)));
+    });
+
     socket.on("send_message", async ({ receiverId, text, imageUrl, _clientId }) => {
       try {
         if (!receiverId || (!text && !imageUrl)) return;
@@ -32,24 +39,29 @@ export function setupSocket(httpServer, corsOrigin) {
           if (!u) return;
           to = String(u._id);
         }
-
         const msg = await Message.create({ sender: userId, receiver: to, text, imageUrl });
         const data = { ...msg.toObject(), _id: String(msg._id), _clientId };
-
         const s = [userId, to].sort();
         await Conversation.findOneAndUpdate(
           { pairKey: `${s[0]}:${s[1]}` },
-          {
-            users: [s[0], s[1]],
-            lastText: text || null,
-            lastImage: imageUrl || null,
-            lastAt: new Date()
-          },
+          { users: [s[0], s[1]], lastText: text || null, lastImage: imageUrl || null, lastAt: new Date() },
           { upsert: true, new: true, setDefaultsOnInsert: true }
         );
-
         io.to(to).emit("new_message", data);
         io.to(userId).emit("new_message", data);
+      } catch {}
+    });
+
+    socket.on("send_group_message", async ({ groupId, text, imageUrl, _clientId }) => {
+      try {
+        if (!groupId || (!text && !imageUrl)) return;
+        if (!mongoose.Types.ObjectId.isValid(groupId)) return;
+        const isMember = await Group.exists({ _id: groupId, members: userId });
+        if (!isMember) return;
+        const msg = await GroupMessage.create({ group: groupId, sender: userId, text, imageUrl });
+        const data = { ...msg.toObject(), _id: String(msg._id), _clientId };
+        await Group.findByIdAndUpdate(groupId, { lastText: text || null, lastImage: imageUrl || null, lastAt: new Date() });
+        io.to(String(groupId)).emit("new_group_message", data);
       } catch {}
     });
   });

@@ -6,6 +6,7 @@ import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/authRoutes.js";
 import chatRoutes from "./routes/chatRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
+import groupRoutes from "./routes/groupRoutes.js";
 import { setupSocket } from "./socket/socket.js";
 
 await connectDB();
@@ -20,6 +21,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/upload", uploadRoutes);
+app.use("/api/groups", groupRoutes);
 
 setupSocket(server, process.env.CLIENT_ORIGIN || "http://localhost:5173");
 

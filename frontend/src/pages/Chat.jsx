@@ -26,6 +26,7 @@ export default function Chat() {
   const [groupInfo, setGroupInfo] = useState(null);
   const [messages, setMessages] = useState([]);
   const [openGroupModal, setOpenGroupModal] = useState(false);
+  const [friendsSet, setFriendsSet] = useState(new Set());
   const loadingRef = useRef(false);
 
   const meId = String(user?.id || user?._id || "");
@@ -35,20 +36,26 @@ export default function Chat() {
     (async () => {
       try {
         const { data } = await api(token).get("/chat/conversations");
-        const mapped = (data || []).map((x) => ({
-          type: "dm",
-          id: x.id,
-          username: x.username,
-          email: x.email,
-          preview: x.lastText || (x.lastImage ? "Image" : ""),
-          time: x.lastAt ? new Date(x.lastAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
-          ts: x.lastAt ? new Date(x.lastAt).getTime() : 0,
-          unread: 0
-        }));
+        const mapped = (data || []).map((x) => {
+          const other = (x.participants || []).find((p) => String(p._id) !== String(meId)) || {};
+          const last = x.lastMessage || {};
+          const preview = last.text ? last.text : last.image ? "Image" : "";
+          const ts = x.updatedAt ? new Date(x.updatedAt).getTime() : 0;
+          const time = ts ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+          return {
+            type: "dm",
+            id: String(other._id || ""),
+            username: other.username || "",
+            email: other.email || "",
+            preview,
+            time,
+            ts,
+            unread: 0
+          };
+        }).filter(r => r.id);
         setConvos(mapped);
         const saved = localStorage.getItem(activeKey(meId));
         if (saved && mapped.some((c) => String(c.id) === String(saved))) setReceiverId(saved);
-        else if (mapped.length) setReceiverId(String(mapped[0].id));
       } catch {}
       try {
         const { data } = await api(token).get("/groups");
@@ -64,10 +71,17 @@ export default function Chat() {
         setGroups(gs);
         const savedG = localStorage.getItem(activeGroupKey(meId));
         if (savedG && gs.some((x) => String(x.id) === String(savedG))) setGroupId(savedG);
-        else if (gs.length) setGroupId(gs[0].id);
       } catch {}
+      try {
+        const { data } = await api(token).get("/friends/friends");
+        const ids = new Set((data || []).map((u) => String(u._id)));
+        setFriendsSet(ids);
+      } catch {}
+      const params = new URLSearchParams(window.location.search);
+      const start = params.get("u");
+      if (start) setReceiverId(start);
     })();
-  }, [token]);
+  }, [token, meId]);
 
   useEffect(() => {
     if (!socket) return;
@@ -115,9 +129,19 @@ export default function Chat() {
     loadingRef.current = true;
     (async () => {
       try {
+        const ok = await api(token).get(`/friends/check/${receiverId}`);
+        if (!ok.data.isFriend) {
+          setMessages([]);
+          loadingRef.current = false;
+          return;
+        }
         const { data } = await api(token).get(`/chat/${receiverId}`);
         setMessages(data);
-      } catch {} finally { loadingRef.current = false; }
+      } catch {
+        setMessages([]);
+      } finally {
+        loadingRef.current = false;
+      }
     })();
   }, [receiverId, token, meId, mode]);
 
@@ -136,6 +160,7 @@ export default function Chat() {
         setGroupInfo(infoRes.data);
       } catch {
         setGroupInfo(null);
+        setMessages([]);
       } finally { loadingRef.current = false; }
     })();
   }, [groupId, token, meId, mode]);
@@ -147,18 +172,24 @@ export default function Chat() {
     try {
       const { data } = await api(token).get(`/chat/resolve/${encodeURIComponent(q)}`);
       const { id, username, email } = data;
+      const ok = await api(token).get(`/friends/check/${id}`);
+      if (!ok.data.isFriend) {
+        alert("Send a friend request from Profile and wait for acceptance before chatting.");
+        return;
+      }
       setReceiverId(id);
       setReceiverInput("");
       setMessages([]);
       setConvos((prev) => (prev.some((c) => c.type==="dm" && String(c.id) === String(id)) ? prev : [{ type:"dm", id, username, email, preview: "", time: "", ts: 0, unread: 0 }, ...prev]));
-    } catch {
-      alert("User not found. Please enter a registered username or email.");
+    } catch (e) {
+      alert(e.response?.data?.error || "User not found.");
     }
   }
 
   async function handleSend({ text, file }) {
     if (mode === "dm" && !isOid(receiverId)) return alert("Select a valid user first.");
     if (mode === "group" && !isOid(groupId)) return alert("Select a valid group first.");
+    if (mode === "dm" && !friendsSet.has(String(receiverId))) return alert("You can message only after friendship is accepted.");
     let imageUrl;
     if (file) {
       const form = new FormData();
@@ -168,13 +199,32 @@ export default function Chat() {
     }
     if (!text && !imageUrl) return;
 
+    const now = new Date();
     const _clientId = cid();
+
     if (mode === "dm") {
-      const optimistic = { _clientId, _id: _clientId, sender: meId, receiver: receiverId, text: text || "", imageUrl: imageUrl || "", createdAt: new Date().toISOString() };
+      const optimistic = { _clientId, _id: _clientId, sender: meId, receiver: receiverId, text: text || "", imageUrl: imageUrl || "", createdAt: now.toISOString() };
       setMessages((prev) => [...prev, optimistic]);
+
+      const preview = text ? text : "Image";
+      const nowStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setConvos((prev) => {
+        const p = [...prev];
+        const idx = p.findIndex((c) => c.type === "dm" && String(c.id) === String(receiverId));
+        const row = { type: "dm", id: String(receiverId), preview, time: nowStr, ts: now.getTime(), unread: 0 };
+        if (idx < 0) { p.unshift(row); return p; }
+        p.splice(idx, 1);
+        p.unshift({ ...p[idx], ...row });
+        return p;
+      });
+
+      try {
+        await api(token).post(`/chat/${receiverId}`, { text: text || "", imageUrl: imageUrl || "" });
+      } catch {}
+
       socket?.emit("send_message", { receiverId, text, imageUrl, _clientId });
     } else {
-      const optimistic = { _clientId, _id: _clientId, sender: meId, group: groupId, text: text || "", imageUrl: imageUrl || "", createdAt: new Date().toISOString() };
+      const optimistic = { _clientId, _id: _clientId, sender: meId, group: groupId, text: text || "", imageUrl: imageUrl || "", createdAt: now.toISOString() };
       setMessages((prev) => [...prev, optimistic]);
       socket?.emit("send_group_message", { groupId, text, imageUrl, _clientId });
     }
@@ -192,10 +242,7 @@ export default function Chat() {
   };
 
   const groupMembersLine = groupInfo?.members?.map(m => m.username || m.email || m.id).join(", ") || "";
-  const memberMap = (groupInfo?.members || []).reduce((acc, m) => {
-    acc[m.id] = m.username || m.email || m.id;
-    return acc;
-  }, {});
+  const memberMap = (groupInfo?.members || []).reduce((acc, m) => { acc[m.id] = m.username || m.email || m.id; return acc; }, {});
 
   return (
     <div className="h-screen w-full overflow-hidden bg-white">

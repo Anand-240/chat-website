@@ -1,75 +1,79 @@
 import express from "express";
-import mongoose from "mongoose";
-import { protect } from "../middleware/authMiddleware.js";
+import { verifyToken } from "../middleware/authMiddleware.js";
+import Conversation from "../models/conversationModel.js";
 import Message from "../models/messageModel.js";
 import User from "../models/userModel.js";
-import Conversation from "../models/conversationModel.js";
 
 const router = express.Router();
 
-router.get("/resolve/:other", protect, async (req, res) => {
+router.get("/resolve/:query", async (req, res) => {
   try {
-    let q = req.params.other;
-    let u = null;
-    if (mongoose.Types.ObjectId.isValid(q)) {
-      u = await User.findById(q).select("username email").lean();
-    } else {
-      u = await User.findOne({ $or: [{ username: q }, { email: q }] })
-        .select("username email")
-        .lean();
-    }
-    if (!u) return res.status(404).json({ error: "not_found" });
-    res.json({ id: String(u._id), username: u.username || null, email: u.email || null });
-  } catch {
-    res.status(500).json({ error: "server" });
-  }
-});
-
-router.get("/conversations", protect, async (req, res) => {
-  try {
-    const me = String(req.user.id);
-    const convos = await Conversation.find({ users: me })
-      .sort({ lastAt: -1 })
-      .populate({ path: "users", select: "username email" })
-      .lean();
-    const out = convos
-      .map((c) => {
-        const other = c.users.find((u) => String(u._id) !== me);
-        if (!other) return null;
-        return {
-          id: String(other._id),
-          username: other.username || null,
-          email: other.email || null,
-          lastText: c.lastText,
-          lastImage: c.lastImage,
-          lastAt: c.lastAt
-        };
-      })
-      .filter(Boolean);
-    res.json(out);
-  } catch {
-    res.status(500).json({ error: "server" });
-  }
-});
-
-router.get("/:other", protect, async (req, res) => {
-  try {
-    const me = String(req.user.id);
-    let otherId = req.params.other;
-    if (!mongoose.Types.ObjectId.isValid(otherId)) {
-      const u = await User.findOne({ $or: [{ username: otherId }, { email: otherId }] }).lean();
-      if (!u) return res.status(404).json({ error: "not_found" });
-      otherId = String(u._id);
-    }
-    const msgs = await Message.find({
+    const q = req.params.query.trim();
+    const user = await User.findOne({
       $or: [
-        { sender: me, receiver: otherId },
-        { sender: otherId, receiver: me }
+        { email: { $regex: new RegExp(`^${q}$`, "i") } },
+        { username: { $regex: new RegExp(`^${q}$`, "i") } }
       ]
-    }).sort({ createdAt: 1 });
-    res.json(msgs);
+    });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json({ id: user._id, username: user.username, email: user.email });
   } catch {
-    res.status(500).json({ error: "server" });
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.get("/", verifyToken, async (req, res) => {
+  try {
+    const conversations = await Conversation.find({ participants: req.user._id })
+      .populate("participants", "username email")
+      .populate("lastMessage")
+      .sort({ updatedAt: -1 });
+    res.json(conversations);
+  } catch {
+    res.status(500).json({ error: "Failed to fetch conversations" });
+  }
+});
+
+router.get("/:receiverId", verifyToken, async (req, res) => {
+  try {
+    const { receiverId } = req.params;
+    const conversation = await Conversation.findOne({
+      participants: { $all: [req.user._id, receiverId] }
+    });
+    if (!conversation) return res.json([]);
+    const messages = await Message.find({ conversation: conversation._id })
+      .populate("sender", "username email")
+      .sort({ createdAt: 1 });
+    res.json(messages);
+  } catch {
+    res.status(500).json({ error: "Failed to fetch messages" });
+  }
+});
+
+router.post("/:receiverId", verifyToken, async (req, res) => {
+  try {
+    const { text, imageUrl } = req.body;
+    const { receiverId } = req.params;
+    let conversation = await Conversation.findOne({
+      participants: { $all: [req.user._id, receiverId] }
+    });
+    if (!conversation) {
+      conversation = await Conversation.create({
+        participants: [req.user._id, receiverId]
+      });
+    }
+    const message = await Message.create({
+      conversation: conversation._id,
+      sender: req.user._id,
+      receiver: receiverId,
+      text: text || "",
+      image: imageUrl || ""
+    });
+    conversation.lastMessage = message._id;
+    await conversation.save();
+    res.status(201).json(message);
+  } catch {
+    res.status(500).json({ error: "Failed to send message" });
   }
 });
 

@@ -6,6 +6,12 @@ import User from "../models/userModel.js";
 import Conversation from "../models/conversationModel.js";
 import Group from "../models/groupModel.js";
 import GroupMessage from "../models/groupMessageModel.js";
+import Contact from "../models/contactModel.js";
+
+const key = (a, b) => {
+  const s = [String(a), String(b)].sort();
+  return `${s[0]}:${s[1]}`;
+};
 
 export function setupSocket(httpServer, corsOrigin) {
   const io = new Server(httpServer, { cors: { origin: corsOrigin, credentials: true } });
@@ -39,6 +45,9 @@ export function setupSocket(httpServer, corsOrigin) {
           if (!u) return;
           to = String(u._id);
         }
+        const ok = await Contact.exists({ pairKey: key(userId, to) });
+        if (!ok) return;
+
         const msg = await Message.create({ sender: userId, receiver: to, text, imageUrl });
         const data = { ...msg.toObject(), _id: String(msg._id), _clientId };
         const s = [userId, to].sort();

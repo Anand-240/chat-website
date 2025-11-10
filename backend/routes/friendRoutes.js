@@ -1,19 +1,20 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
 import User from "../models/userModel.js";
+import Conversation from "../models/conversationModel.js";
 
 const router = express.Router();
 
 router.post("/request/:receiverId", protect, async (req, res) => {
   try {
+    const senderId = req.user._id;
     const receiver = await User.findById(req.params.receiverId);
-    const sender = await User.findById(req.user._id);
     if (!receiver) return res.status(404).json({ error: "User not found" });
-    if (receiver.friendRequests.some(id => String(id) === String(sender._id)))
+    if (receiver.friendRequests.some(id => String(id) === String(senderId)))
       return res.status(400).json({ error: "Request already sent" });
-    if (receiver.friends.some(id => String(id) === String(sender._id)))
+    if (receiver.friends.some(id => String(id) === String(senderId)))
       return res.status(400).json({ error: "Already friends" });
-    receiver.friendRequests.push(sender._id);
+    receiver.friendRequests.push(senderId);
     await receiver.save();
     res.json({ message: "Friend request sent successfully" });
   } catch {
@@ -31,6 +32,10 @@ router.post("/accept/:senderId", protect, async (req, res) => {
     if (!sender.friends.some(id => String(id) === String(receiver._id))) sender.friends.push(receiver._id);
     await receiver.save();
     await sender.save();
+
+    let convo = await Conversation.findOne({ participants: { $all: [receiver._id, sender._id] } });
+    if (!convo) await Conversation.create({ participants: [receiver._id, sender._id] });
+
     res.json({ message: "Friend request accepted" });
   } catch {
     res.status(500).json({ error: "Failed to accept request" });
@@ -39,10 +44,8 @@ router.post("/accept/:senderId", protect, async (req, res) => {
 
 router.post("/reject/:senderId", protect, async (req, res) => {
   try {
-    const sender = await User.findById(req.params.senderId);
     const receiver = await User.findById(req.user._id);
-    if (!sender || !receiver) return res.status(404).json({ error: "User not found" });
-    receiver.friendRequests = receiver.friendRequests.filter(id => String(id) !== String(sender._id));
+    receiver.friendRequests = receiver.friendRequests.filter(id => String(id) !== String(req.params.senderId));
     await receiver.save();
     res.json({ message: "Friend request rejected" });
   } catch {

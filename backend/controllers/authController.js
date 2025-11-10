@@ -4,17 +4,24 @@ import generateToken from "../utils/generateToken.js";
 
 export const register = async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    let { username, email, password } = req.body || {};
     if (!username || !email || !password) return res.status(400).json({ error: "Missing fields" });
+    username = String(username).trim();
+    email = String(email).trim().toLowerCase();
 
-    const exists = await User.findOne({ $or: [{ email: email.toLowerCase() }, { username }] });
+    const exists = await User.findOne({
+      $or: [
+        { email: email },
+        { username: { $regex: new RegExp(`^${username}$`, "i") } }
+      ]
+    });
     if (exists) return res.status(409).json({ error: "User already exists" });
 
     const hash = await bcrypt.hash(password, 10);
-    const user = await User.create({ username, email: email.toLowerCase(), password: hash });
+    const user = await User.create({ username, email, password: hash });
 
     const token = generateToken({ id: user._id, username: user.username, email: user.email });
-    res.json({ token, user: { id: user._id, username: user.username, email: user.email, profilePic: user.profilePic } });
+    res.status(201).json({ token, user: { id: user._id, username: user.username, email: user.email, profilePic: user.profilePic } });
   } catch {
     res.status(500).json({ error: "Server error" });
   }
@@ -22,11 +29,16 @@ export const register = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-    const { email, username, password } = req.body;
-    if (!password || (!email && !username)) return res.status(400).json({ error: "Missing fields" });
+    const identifier = String(req.body?.identifier || req.body?.email || req.body?.username || "").trim();
+    const password = String(req.body?.password || "");
+    if (!identifier || !password) return res.status(400).json({ error: "Missing fields" });
 
-    const query = email ? { email: email.toLowerCase() } : { username };
-    const user = await User.findOne(query);
+    const user = await User.findOne({
+      $or: [
+        { email: identifier.toLowerCase() },
+        { username: { $regex: new RegExp(`^${identifier}$`, "i") } }
+      ]
+    });
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
     const ok = await bcrypt.compare(password, user.password);

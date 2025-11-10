@@ -3,15 +3,16 @@ import User from "../models/userModel.js";
 
 const verifyToken = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Access denied. No token provided." });
+    const raw = req.headers.authorization || "";
+    const token = raw.startsWith("Bearer ") ? raw.slice(7) : null;
+    if (!token) return res.status(401).json({ error: "No token" });
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(decoded.id).select("-password");
-    if (!user) return res.status(404).json({ error: "User not found" });
-    req.user = user;
+    if (!user) return res.status(401).json({ error: "Invalid token" });
+    req.user = { id: String(user._id), _id: user._id, username: user.username, email: user.email };
     next();
   } catch {
-    res.status(401).json({ error: "Invalid or expired token" });
+    res.status(401).json({ error: "Unauthorized" });
   }
 };
 

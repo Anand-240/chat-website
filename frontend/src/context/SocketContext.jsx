@@ -1,23 +1,34 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { io } from "socket.io-client";
+import { SOCKET_URL } from "../constants.js";
 import { useAuth } from "./AuthContext.jsx";
-import { API_BASE_URL } from "../constants.js";
 
 const SocketContext = createContext(null);
+export const useSocket = () => useContext(SocketContext);
 
 export function SocketProvider({ children }) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [socket, setSocket] = useState(null);
 
   useEffect(() => {
-    if (!token) { if (socket) socket.disconnect(); setSocket(null); return; }
-    const s = io(API_BASE_URL, { auth: { token }, transports: ["websocket"], withCredentials: false });
+    if (!token || !user) return;
+    const s = io(SOCKET_URL, {
+      transports: ["websocket", "polling"],
+      withCredentials: true,
+      auth: { token, userId: String(user.id || user._id) },
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 500,
+    });
+    s.on("connect", () => {
+      s.emit("join", String(user.id || user._id));
+    });
     setSocket(s);
-    s.on("connect", () => { s.emit("join_groups"); });
-    return () => { s.disconnect(); setSocket(null); };
-  }, [token]);
+    return () => {
+      s.close();
+      setSocket(null);
+    };
+  }, [token, user]);
 
   return <SocketContext.Provider value={socket}>{children}</SocketContext.Provider>;
 }
-
-export function useSocket() { return useContext(SocketContext); }

@@ -1,79 +1,44 @@
-import { Server } from "socket.io";
-import jwt from "jsonwebtoken";
-import mongoose from "mongoose";
 import Message from "../models/messageModel.js";
-import User from "../models/userModel.js";
 import Conversation from "../models/conversationModel.js";
-import Group from "../models/groupModel.js";
 import GroupMessage from "../models/groupMessageModel.js";
-import Contact from "../models/contactModel.js";
 
-const key = (a, b) => {
-  const s = [String(a), String(b)].sort();
-  return `${s[0]}:${s[1]}`;
-};
+const online = new Map();
 
-export function setupSocket(httpServer, corsOrigin) {
-  const io = new Server(httpServer, { cors: { origin: corsOrigin, credentials: true } });
-
-  io.use((socket, next) => {
-    try {
-      const token = socket.handshake.auth?.token;
-      const u = jwt.verify(token, process.env.JWT_SECRET);
-      socket.user = { id: u.id, username: u.username };
-      next();
-    } catch {
-      next(new Error("auth"));
-    }
-  });
-
+export function setupSocket(io) {
   io.on("connection", (socket) => {
-    const userId = String(socket.user.id);
-    socket.join(userId);
+    const uid = socket.handshake.auth?.userId;
+    if (uid) online.set(String(uid), socket.id);
 
-    socket.on("join_groups", async () => {
-      const groups = await Group.find({ members: userId }).select("_id").lean();
-      groups.forEach((g) => socket.join(String(g._id)));
+    socket.on("join", (userId) => {
+      if (userId) online.set(String(userId), socket.id);
     });
 
-    socket.on("send_message", async ({ receiverId, text, imageUrl, _clientId }) => {
-      try {
-        if (!receiverId || (!text && !imageUrl)) return;
-        let to = receiverId;
-        if (!mongoose.Types.ObjectId.isValid(receiverId)) {
-          const u = await User.findOne({ $or: [{ username: receiverId }, { email: receiverId }] }).lean();
-          if (!u) return;
-          to = String(u._id);
-        }
-        const ok = await Contact.exists({ pairKey: key(userId, to) });
-        if (!ok) return;
+    socket.on("send_message", async ({ senderId, receiverId, text, imageUrl, _clientId }) => {
+      if (!senderId || !receiverId) return;
 
-        const msg = await Message.create({ sender: userId, receiver: to, text, imageUrl });
-        const data = { ...msg.toObject(), _id: String(msg._id), _clientId };
-        const s = [userId, to].sort();
-        await Conversation.findOneAndUpdate(
-          { pairKey: `${s[0]}:${s[1]}` },
-          { users: [s[0], s[1]], lastText: text || null, lastImage: imageUrl || null, lastAt: new Date() },
-          { upsert: true, new: true, setDefaultsOnInsert: true }
-        );
-        io.to(to).emit("new_message", data);
-        io.to(userId).emit("new_message", data);
-      } catch {}
+      let convo = await Conversation.findOne({ participants: { $all: [senderId, receiverId] } });
+      if (!convo) convo = await Conversation.create({ participants: [senderId, receiverId] });
+
+      const msg = await Message.create({ sender: senderId, receiver: receiverId, text: text || "", imageUrl: imageUrl || "", conversation: convo._id });
+      convo.lastMessage = msg._id;
+      await convo.save();
+
+      const payload = { ...msg.toObject(), _clientId };
+      const rSock = online.get(String(receiverId));
+      if (rSock) io.to(rSock).emit("new_message", payload);
+      const sSock = online.get(String(senderId));
+      if (sSock) io.to(sSock).emit("new_message", payload);
     });
 
-    socket.on("send_group_message", async ({ groupId, text, imageUrl, _clientId }) => {
-      try {
-        if (!groupId || (!text && !imageUrl)) return;
-        if (!mongoose.Types.ObjectId.isValid(groupId)) return;
-        const isMember = await Group.exists({ _id: groupId, members: userId });
-        if (!isMember) return;
-        const msg = await GroupMessage.create({ group: groupId, sender: userId, text, imageUrl });
-        const data = { ...msg.toObject(), _id: String(msg._id), _clientId };
-        await Group.findByIdAndUpdate(groupId, { lastText: text || null, lastImage: imageUrl || null, lastAt: new Date() });
-        io.to(String(groupId)).emit("new_group_message", data);
-      } catch {}
+    socket.on("send_group_message", async ({ senderId, groupId, text, imageUrl, _clientId }) => {
+      if (!senderId || !groupId) return;
+      const msg = await GroupMessage.create({ sender: senderId, group: groupId, text: text || "", imageUrl: imageUrl || "" });
+      const payload = { ...msg.toObject(), _clientId };
+      io.emit("new_group_message", payload);
+    });
+
+    socket.on("disconnect", () => {
+      for (const [k, v] of online.entries()) if (v === socket.id) online.delete(k);
     });
   });
-
-  return io;
 }

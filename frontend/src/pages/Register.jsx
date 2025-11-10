@@ -1,74 +1,91 @@
 import React, { useState } from "react";
 import { api } from "../utils/api.js";
-import { saveToken } from "../store.js";
 import { useAuth } from "../context/AuthContext.jsx";
 
-export default function Register({ onDone, onGoLogin }) {
-  const [form, setForm] = useState({ username: "", email: "", password: "" });
+export default function Register({ onGoLogin }) {
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const { setUserAndToken } = useAuth();
 
-  async function submit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+
     try {
-      const { data } = await api().post("/auth/register", form);
-      if (data?.token) {
-        saveToken(data.token);
-        setUserAndToken(data.user, data.token);
-        window.location.reload(); // directly go to chat
-      } else {
-        onDone?.();
-      }
+      const { data } = await api().post("/auth/register", {
+        username,
+        email,
+        password,
+      });
+
+      setUserAndToken(data.user, data.token);
+      window.location.href = "/chat";
     } catch (err) {
-      setError(err.response?.data?.error || "Registration failed");
+      const code = err?.response?.status;
+      const msg = err?.response?.data?.error;
+      if (code === 409) setError("User already exists. Try logging in.");
+      else setError(msg || "Registration failed.");
     }
   }
 
   return (
-    <div className="h-screen flex items-center justify-center bg-white">
+    <div className="flex items-center justify-center h-screen bg-gradient-to-br from-blue-50 to-blue-100">
       <form
-        onSubmit={submit}
-        className="bg-[#f9fafb] p-8 rounded-2xl shadow-md w-[360px] flex flex-col gap-4"
+        onSubmit={handleSubmit}
+        className="bg-white shadow-xl rounded-2xl p-8 w-[380px] flex flex-col gap-5"
       >
-        <h2 className="text-2xl font-semibold text-center mb-2 text-[#0f172a]">Create Account</h2>
+        <h2 className="text-3xl text-center font-bold text-blue-700">
+          Create Account
+        </h2>
+
         <input
           type="text"
           placeholder="Username"
-          value={form.username}
-          onChange={(e) => setForm({ ...form, username: e.target.value })}
-          className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
           required
         />
+
         <input
           type="email"
           placeholder="Email"
-          value={form.email}
-          onChange={(e) => setForm({ ...form, email: e.target.value })}
-          className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
           required
         />
+
         <input
           type="password"
           placeholder="Password"
-          value={form.password}
-          onChange={(e) => setForm({ ...form, password: e.target.value })}
-          className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
           required
         />
-        {error && <div className="text-red-500 text-sm text-center">{error}</div>}
+
+        {error && <p className="text-red-500 text-sm text-center">{error}</p>}
+
         <button
           type="submit"
-          className="bg-blue-600 text-white rounded-lg py-2 hover:bg-blue-700 transition"
+          className="bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition"
         >
           Register
         </button>
-        <div className="text-sm text-center text-[#667085]">
+
+        <p className="text-center text-sm text-gray-600">
           Already have an account?{" "}
-          <button type="button" onClick={onGoLogin} className="text-blue-600 hover:underline">
+          <button
+            type="button"
+            onClick={onGoLogin}
+            className="text-blue-600 hover:underline"
+          >
             Login
           </button>
-        </div>
+        </p>
       </form>
     </div>
   );

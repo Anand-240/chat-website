@@ -1,99 +1,59 @@
 import express from "express";
-import mongoose from "mongoose";
-import { protect } from "../middleware/authMiddleware.js";
+import { verifyToken } from "../middleware/authMiddleware.js";
 import Group from "../models/groupModel.js";
 import GroupMessage from "../models/groupMessageModel.js";
+import User from "../models/userModel.js";
 
 const router = express.Router();
 
-router.post("/", protect, async (req, res) => {
+router.get("/", verifyToken, async (req, res) => {
   try {
-    const g = await Group.create({
-      name: req.body.name,
-      admin: req.user.id,
-      members: [req.user.id, ...new Set(req.body.members || [])]
-    });
-    res.json(g);
+    const list = await Group.find({ members: req.user.id })
+      .select("name members updatedAt")
+      .sort({ updatedAt: -1 });
+    res.json(list);
   } catch {
-    res.status(500).json({ error: "server" });
+    res.status(500).json({ error: "Failed to load groups" });
   }
 });
 
-router.post("/:groupId/members", protect, async (req, res) => {
+router.get("/:groupId", verifyToken, async (req, res) => {
   try {
-    const g = await Group.findByIdAndUpdate(
-      req.params.groupId,
-      { $addToSet: { members: { $each: req.body.members || [] } } },
-      { new: true }
-    );
-    if (!g) return res.status(404).json({ error: "not_found" });
-    res.json(g);
+    const g = await Group.findById(req.params.groupId).populate("members", "username email");
+    if (!g) return res.status(404).json({ error: "Group not found" });
+    res.json({ _id: g._id, name: g.name, members: g.members.map(m => ({ id: m._id, username: m.username, email: m.email })) });
   } catch {
-    res.status(500).json({ error: "server" });
+    res.status(500).json({ error: "Failed to load group" });
   }
 });
 
-router.delete("/:groupId/members/:userId", protect, async (req, res) => {
+router.get("/:groupId/messages", verifyToken, async (req, res) => {
   try {
-    const g = await Group.findByIdAndUpdate(
-      req.params.groupId,
-      { $pull: { members: req.params.userId } },
-      { new: true }
-    );
-    if (!g) return res.status(404).json({ error: "not_found" });
-    res.json(g);
-  } catch {
-    res.status(500).json({ error: "server" });
-  }
-});
-
-router.get("/", protect, async (req, res) => {
-  try {
-    const groups = await Group.find({ members: req.user.id })
-      .sort({ lastAt: -1 })
-      .select("name members admin lastText lastImage lastAt createdAt updatedAt")
-      .lean();
-    res.json(groups);
-  } catch {
-    res.status(500).json({ error: "server" });
-  }
-});
-
-router.get("/:groupId", protect, async (req, res) => {
-  try {
-    const gid = req.params.groupId;
-    if (!mongoose.Types.ObjectId.isValid(gid)) return res.status(400).json({ error: "bad_id" });
-    const g = await Group.findById(gid)
-      .populate({ path: "members", select: "username email" })
-      .populate({ path: "admin", select: "username email" })
-      .lean();
-    if (!g) return res.status(404).json({ error: "not_found" });
-    const isMember = g.members.some((m) => String(m._id) === String(req.user.id));
-    if (!isMember) return res.status(403).json({ error: "forbidden" });
-    res.json({
-      id: String(g._id),
-      name: g.name,
-      admin: g.admin ? { id: String(g.admin._id), username: g.admin.username || null, email: g.admin.email || null } : null,
-      members: g.members.map((m) => ({ id: String(m._id), username: m.username || null, email: m.email || null })),
-      lastText: g.lastText || null,
-      lastImage: g.lastImage || null,
-      lastAt: g.lastAt || null
-    });
-  } catch {
-    res.status(500).json({ error: "server" });
-  }
-});
-
-router.get("/:groupId/messages", protect, async (req, res) => {
-  try {
-    const gid = req.params.groupId;
-    if (!mongoose.Types.ObjectId.isValid(gid)) return res.status(400).json({ error: "bad_id" });
-    const isMember = await Group.exists({ _id: gid, members: req.user.id });
-    if (!isMember) return res.status(403).json({ error: "forbidden" });
-    const msgs = await GroupMessage.find({ group: gid }).sort({ createdAt: 1 });
+    const msgs = await GroupMessage.find({ group: req.params.groupId }).sort({ createdAt: 1 });
     res.json(msgs);
   } catch {
-    res.status(500).json({ error: "server" });
+    res.status(500).json({ error: "Failed to load group messages" });
+  }
+});
+
+router.post("/", verifyToken, async (req, res) => {
+  try {
+    const { name, memberIdentifiers = [] } = req.body || {};
+    const membersDocs = await Promise.all(
+      memberIdentifiers.map(async q =>
+        await User.findOne({
+          $or: [
+            { email: { $regex: new RegExp(`^${q}$`, "i") } },
+            { username: { $regex: new RegExp(`^${q}$`, "i") } }
+          ]
+        })
+      )
+    );
+    const ids = [req.user.id, ...membersDocs.filter(Boolean).map(u => u._id)];
+    const g = await Group.create({ name, members: Array.from(new Set(ids.map(String))) });
+    res.json(g);
+  } catch {
+    res.status(500).json({ error: "Failed to create group" });
   }
 });
 

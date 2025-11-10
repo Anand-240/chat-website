@@ -1,89 +1,67 @@
 import React, { useState } from "react";
 import { api } from "../utils/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
-import { io } from "socket.io-client";
-import { API_BASE_URL } from "../constants.js";
 
-export default function Login({ onDone, onGoRegister }) {
-  const { setAuth } = useAuth();
+export default function Login({ onGoRegister }) {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const { setUserAndToken } = useAuth();
 
-  async function submit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+
     try {
-      const body = identifier.includes("@")
-        ? { email: identifier, password }
-        : { username: identifier, password };
-
-      const { data } = await api().post("/auth/login", body);
-
-      const { token, user } = data;
-      if (!token || !user) throw new Error("Invalid response from server");
-
-      setAuth(token, user);
-
-      const socket = io(API_BASE_URL, {
-        transports: ["websocket"],
-        auth: { token },
-        withCredentials: true,
-      });
-
-      socket.on("connect", () => {
-        console.log("✅ Socket connected:", socket.id);
-      });
-
-      socket.on("connect_error", (err) => {
-        console.error("Socket error:", err.message);
-      });
-
-      onDone && onDone();
+      const { data } = await api().post("/auth/login", { identifier, password });
+      setUserAndToken(data.user, data.token);
+      window.location.href = "/chat";
     } catch (err) {
-      setError(err.response?.data?.error || err.message || "Login failed");
+      setError(err.response?.data?.error || "Invalid credentials");
     }
   }
 
   return (
-    <div className="h-screen flex items-center justify-center bg-gray-50">
+    <div className="flex items-center justify-center h-screen bg-gradient-to-br from-blue-50 to-blue-100">
       <form
-        onSubmit={submit}
-        className="bg-white w-96 p-8 rounded-xl shadow-md space-y-4"
+        onSubmit={handleSubmit}
+        className="bg-white shadow-xl rounded-2xl p-8 w-[360px] flex flex-col gap-5"
       >
-        <h1 className="text-2xl font-semibold text-center text-indigo-600">
-          Sign In
-        </h1>
+        <h2 className="text-3xl text-center font-bold text-blue-700">Login</h2>
+
         <input
-          className="w-full border border-gray-300 rounded-lg p-2 outline-none"
-          placeholder="Username or Email"
+          type="text"
+          placeholder="Email or Username"
           value={identifier}
           onChange={(e) => setIdentifier(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
           required
         />
+
         <input
           type="password"
-          className="w-full border border-gray-300 rounded-lg p-2 outline-none"
           placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
           required
         />
-        {error && (
-          <div className="text-sm text-red-500 text-center">{error}</div>
-        )}
+
+        {error && <p className="text-red-500 text-sm text-center">{error}</p>}
+
         <button
           type="submit"
-          className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition"
+          className="bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition"
         >
           Login
         </button>
-        <p className="text-sm text-center">
-          Don’t have an account?{" "}
+
+        <p className="text-center text-sm text-gray-600">
+          New user?{" "}
           <button
             type="button"
             onClick={onGoRegister}
-            className="text-indigo-600 underline"
+            className="text-blue-600 hover:underline"
           >
             Register
           </button>

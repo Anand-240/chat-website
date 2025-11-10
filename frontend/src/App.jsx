@@ -5,6 +5,7 @@ import Register from "./pages/Register.jsx";
 import Chat from "./pages/Chat.jsx";
 import Profile from "./pages/Profile.jsx";
 import Navbar from "./components/Navbar.jsx";
+import VideoCall from "./components/VideoCall.jsx";
 
 export default function App() {
   const { token } = useAuth();
@@ -21,6 +22,7 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-white">
+      <VideoCall />
       <Navbar onGoChat={() => setView("chat")} onGoProfile={() => setView("profile")} />
       <div className="flex-1 min-h-0">
         {view === "chat" ? (

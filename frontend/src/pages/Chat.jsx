@@ -8,20 +8,17 @@ import Composer from "../components/Composer.jsx";
 
 const isOid = (s) => /^[a-f0-9]{24}$/i.test(String(s || ""));
 const cid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-const activeKey = (uid) => `active_chat:${uid || "guest"}`;
 
 export default function Chat() {
-  const { user, token, logout } = useAuth();
+  const { user, token } = useAuth();
   const socket = useSocket();
-
+  const meId = String(user?.id || user?._id || "");
+  const [mode, setMode] = useState("dm");
   const [convos, setConvos] = useState([]);
   const [groups, setGroups] = useState([]);
-  const [receiverInput, setReceiverInput] = useState("");
-  const [receiverId, setReceiverId] = useState("");
-  const [receiverInfo, setReceiverInfo] = useState(null);
+  const [activeId, setActiveId] = useState("");
+  const [peerInfo, setPeerInfo] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [friendsSet, setFriendsSet] = useState(new Set());
-  const meId = String(user?.id || user?._id || "");
   const loadingRef = useRef(false);
 
   useEffect(() => {
@@ -29,190 +26,205 @@ export default function Chat() {
     (async () => {
       try {
         const { data } = await api(token).get("/chat/conversations");
-        const mapped = (data || []).map((x) => {
-          const other = (x.participants || []).find((p) => String(p._id) !== String(meId)) || {};
-          const last = x.lastMessage || {};
-          const preview = last.text ? last.text : last.image ? "Image" : "";
-          const ts = x.updatedAt ? new Date(x.updatedAt).getTime() : 0;
-          const time = ts ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-          return { type: "dm", id: String(other._id || ""), username: other.username || "", email: other.email || "", preview, time, ts, unread: 0 };
-        }).filter(r => r.id);
+        const mapped = (data || [])
+          .map((x) => {
+            const other = (x.participants || []).find((p) => String(p._id) !== String(meId)) || {};
+            return {
+              type: "dm",
+              id: String(other._id || ""),
+              username: other.username || "",
+              email: other.email || "",
+              ts: new Date(x.updatedAt || Date.now()).getTime(),
+            };
+          })
+          .filter((r) => r.id);
         setConvos(mapped);
-        const saved = localStorage.getItem(activeKey(meId));
-        if (saved && mapped.some((c) => String(c.id) === String(saved))) setReceiverId(saved);
       } catch {}
       try {
         const { data } = await api(token).get("/groups");
-        setGroups((data || []).map(g => ({
-          type: "group",
-          id: String(g._id),
-          name: g.name,
-          preview: "",
-          time: "",
-          ts: new Date(g.updatedAt || Date.now()).getTime(),
-          unread: 0
-        })));
-      } catch {}
-      try {
-        const { data } = await api(token).get("/friends/friends");
-        const ids = new Set((data || []).map(u => String(u._id)));
-        setFriendsSet(ids);
+        setGroups(
+          (data || []).map((g) => ({
+            type: "group",
+            id: String(g._id),
+            name: g.name,
+            ts: new Date(g.updatedAt || Date.now()).getTime(),
+          }))
+        );
       } catch {}
     })();
   }, [token, meId]);
 
   useEffect(() => {
     if (!socket) return;
-    const onNew = (msg) => {
+
+    const onDM = (msg) => {
+      if (mode !== "dm") return;
       const other = String(msg.sender) === meId ? String(msg.receiver) : String(msg.sender);
-      const show = String(other) === String(receiverId);
-      if (show) setMessages((prev) => (msg._clientId && prev.some((p) => p._clientId === msg._clientId) ? prev : [...prev, msg]));
-      const now = new Date(msg.createdAt || Date.now());
-      const nowStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      setConvos((prev) => {
-        const p = [...prev];
-        const idx = p.findIndex((c) => String(c.id) === String(other));
-        const preview = msg.text ? msg.text : "Image";
-        if (idx < 0) {
-          p.unshift({ type: "dm", id: other, username: "", email: "", preview, time: nowStr, ts: now.getTime(), unread: show ? 0 : 1 });
-          return p;
-        }
-        const row = { ...p[idx], preview, time: nowStr, ts: now.getTime(), unread: show ? 0 : (p[idx].unread || 0) + (String(msg.sender) !== meId ? 1 : 0) };
-        p.splice(idx, 1);
-        p.unshift(row);
-        return p;
-      });
+      if (String(activeId) !== String(other)) return;
+      setMessages((prev) =>
+        prev.some((p) => p._id === msg._id || p._clientId === msg._clientId) ? prev : [...prev, msg]
+      );
     };
-    socket.on("new_message", onNew);
-    return () => socket.off("new_message", onNew);
-  }, [socket, receiverId, meId]);
+
+    const onGroup = (msg) => {
+      if (mode !== "group") return;
+      if (String(activeId) !== String(msg.group)) return;
+      const senderId = typeof msg.sender === "object" ? String(msg.sender._id) : String(msg.sender);
+      const senderName = typeof msg.sender === "object" ? msg.sender.username : msg.senderName || "Unknown";
+      const normalized = { ...msg, sender: senderId, senderName };
+      setMessages((prev) =>
+        prev.some((p) => p._id === normalized._id || p._clientId === normalized._clientId)
+          ? prev
+          : [...prev, normalized]
+      );
+    };
+
+    socket.on("new_message", onDM);
+    socket.on("new_group_message", onGroup);
+    return () => {
+      socket.off("new_message", onDM);
+      socket.off("new_group_message", onGroup);
+    };
+  }, [socket, mode, activeId, meId]);
 
   useEffect(() => {
-    if (!receiverId || !token) return;
-    localStorage.setItem(activeKey(meId), receiverId);
+    if (!activeId || !token) return;
     if (loadingRef.current) return;
     loadingRef.current = true;
     (async () => {
       try {
-        const ok = await api(token).get(`/friends/check/${receiverId}`);
-        if (!ok.data.isFriend) {
-          setMessages([]);
-          loadingRef.current = false;
-          return;
+        if (mode === "dm") {
+          const [chatRes, userRes] = await Promise.all([
+            api(token).get(`/chat/${activeId}`),
+            api(token).get(`/chat/user/${activeId}`),
+          ]);
+          setMessages(chatRes.data || []);
+          setPeerInfo(userRes.data || null);
+        } else {
+          socket?.emit("join_group", { groupId: activeId, userId: meId });
+          const [metaRes, msgsRes] = await Promise.all([
+            api(token).get(`/groups/${activeId}`),
+            api(token).get(`/groups/${activeId}/messages`),
+          ]);
+          const msgsWithNames = (msgsRes.data || []).map((m) => {
+            const senderId = typeof m.sender === "object" ? String(m.sender._id) : String(m.sender);
+            const senderName = typeof m.sender === "object" ? m.sender.username : m.senderName || "Unknown";
+            return { ...m, sender: senderId, senderName };
+          });
+          setPeerInfo(metaRes.data || null);
+          setMessages(msgsWithNames);
         }
-        const [chatRes, userRes] = await Promise.all([
-          api(token).get(`/chat/${receiverId}`),
-          api(token).get(`/chat/user/${receiverId}`)
-        ]);
-        setMessages(chatRes.data);
-        setReceiverInfo(userRes.data);
       } catch {
         setMessages([]);
-        setReceiverInfo(null);
+        setPeerInfo(null);
       } finally {
         loadingRef.current = false;
       }
     })();
-  }, [receiverId, token, meId]);
-
-  async function applyReceiver() {
-    const q = receiverInput.trim();
-    if (!q) return;
-    try {
-      const { data } = await api(token).get(`/chat/resolve/${encodeURIComponent(q)}`);
-      const { id, username, email } = data;
-      const ok = await api(token).get(`/friends/check/${id}`);
-      if (!ok.data.isFriend) {
-        alert("Send a friend request and wait for acceptance before chatting.");
-        return;
-      }
-      setReceiverId(id);
-      setReceiverInfo({ id, username, email });
-      setReceiverInput("");
-      setMessages([]);
-      setConvos((prev) => prev.some((c) => c.type === "dm" && String(c.id) === String(id)) ? prev : [{ type: "dm", id, username, email, preview: "", time: "", ts: 0, unread: 0 }, ...prev]);
-    } catch (e) {
-      alert(e.response?.data?.error || "User not found.");
-    }
-  }
+  }, [activeId, mode, token, meId, socket]);
 
   async function handleSend({ text, file }) {
-    if (!isOid(receiverId)) return alert("Select a valid user first.");
-    if (!friendsSet.has(String(receiverId))) return alert("You can message only after friendship is accepted.");
+    if (!isOid(activeId)) return;
     let imageUrl;
     if (file) {
       const form = new FormData();
       form.append("image", file);
-      const up = await api(token).post("/upload", form, { headers: { "Content-Type": "multipart/form-data" } });
+      const up = await api(token).post("/upload", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
       imageUrl = up.data.url;
     }
     if (!text && !imageUrl) return;
 
     const now = new Date();
     const _clientId = cid();
-    const optimistic = { _clientId, _id: _clientId, sender: meId, receiver: receiverId, text: text || "", imageUrl: imageUrl || "", createdAt: now.toISOString() };
-    setMessages((prev) => [...prev, optimistic]);
-    const nowStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    const preview = text ? text : "Image";
-    setConvos((prev) => {
-      const p = [...prev];
-      const idx = p.findIndex((c) => c.type === "dm" && String(c.id) === String(receiverId));
-      if (idx < 0) { p.unshift({ type: "dm", id: receiverId, username: receiverInfo?.username || "", email: receiverInfo?.email || "", preview, time: nowStr, ts: now.getTime(), unread: 0 }); return p; }
-      const row = { ...p[idx], preview, time: nowStr, ts: now.getTime(), unread: 0 };
-      p.splice(idx, 1);
-      p.unshift(row);
-      return p;
-    });
 
-    await api(token).post(`/chat/${receiverId}`, { text: text || "", imageUrl: imageUrl || "" });
-    socket?.emit("send_message", { senderId: meId, receiverId, text, imageUrl, _clientId });
+    if (mode === "dm") {
+      const optimistic = {
+        _clientId,
+        _id: _clientId,
+        sender: meId,
+        receiver: activeId,
+        text: text || "",
+        imageUrl: imageUrl || "",
+        createdAt: now.toISOString(),
+      };
+      setMessages((p) => [...p, optimistic]);
+      await api(token).post(`/chat/${activeId}`, { text, imageUrl, _clientId });
+    } else {
+      const optimistic = {
+        _clientId,
+        _id: _clientId,
+        sender: meId,
+        senderName: user.username,
+        group: activeId,
+        text: text || "",
+        imageUrl: imageUrl || "",
+        createdAt: now.toISOString(),
+      };
+      setMessages((p) => [...p, optimistic]);
+      await api(token).post(`/groups/${activeId}/messages`, {
+        text,
+        imageUrl,
+        _clientId,
+        senderName: user.username,
+      });
+    }
   }
 
-  function handleKey(e) { if (e.key === "Enter") { e.preventDefault(); applyReceiver(); } }
+  function onGroupCreated(g) {
+    setGroups((prev) => [
+      {
+        type: "group",
+        id: String(g._id),
+        name: g.name,
+        ts: new Date(g.updatedAt || Date.now()).getTime(),
+      },
+      ...prev,
+    ]);
+  }
 
-  const list = [...convos, ...groups].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const items = [
+    ...convos.map((c) => ({ ...c, label: c.username, type: "dm" })),
+    ...groups.map((g) => ({ ...g, label: `# ${g.name}`, type: "group" })),
+  ].sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
   return (
     <div className="h-screen w-full overflow-hidden bg-white">
-      <div className="grid h-full w-full" style={{ gridTemplateColumns: "360px 1fr" }}>
+      <div className="grid h-full w-full" style={{ gridTemplateColumns: "340px 1fr" }}>
         <Sidebar
           me={{ username: user?.username, email: user?.email }}
-          items={list}
-          activeId={receiverId}
-          onSelect={(c) => { if (c.type === "dm") { setReceiverId(c.id); setReceiverInfo(c); } }}
-          view="dm"
-          onChangeView={() => {}}
+          items={items}
+          activeId={activeId}
+          onSelect={(row) => {
+            setMode(row.type);
+            setActiveId(row.id);
+          }}
+          view={mode}
+          onChangeView={(v) => setMode(v)}
+          onGroupCreated={onGroupCreated}
         />
-        <div className="h-full min-h-0 w-full bg-white border-l border-(--border) flex flex-col">
-          <div className="px-6 h-16 border-b border-(--border) flex items-center justify-between shrink-0">
+        <div className="h-full min-h-0 w-full bg-white border-l border-gray-200 flex flex-col">
+          <div className="px-6 h-16 border-b border-gray-200 flex items-center justify-between">
             <div className="min-w-0">
-              <div className="text-base font-semibold truncate">{receiverInfo?.username || "Chat"}</div>
-              <div className="text-[12px] text-[#667085] truncate">{receiverInfo?.email || ""}</div>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                className="rounded-xl border border-(--border) bg-[#0f1218] px-3 py-2 text-[14px] text-white/90 placeholder:text-[#70778a] outline-none focus:ring-2 focus:ring-(--accent2)/30 w-72"
-                placeholder="username / email"
-                value={receiverInput}
-                onChange={(e) => setReceiverInput(e.target.value)}
-                onKeyDown={handleKey}
-              />
-              <button onClick={applyReceiver} className="rounded-xl px-4 py-2 bg-(--primary) text-white text-sm">Start</button>
-              <button onClick={logout} className="rounded-xl px-4 py-2 text-sm bg-[#f4f5f9]">Logout</button>
+              <div className="text-base font-semibold truncate">
+                {mode === "dm" ? peerInfo?.username || "Chat" : peerInfo?.name || "Group"}
+              </div>
+              <div className="text-[12px] text-gray-500 truncate">
+                {mode === "dm"
+                  ? peerInfo?.email || ""
+                  : peerInfo?.members?.map((m) => m.username).join(", ") || ""}
+              </div>
             </div>
           </div>
-          {!receiverId ? (
-            <div className="flex-1 grid place-items-center text-[#667085] text-sm min-h-0">Type a registered username or email to start</div>
-          ) : (
-            <div className="flex-1 min-h-0 flex flex-col bg-white">
-              <div className="flex-1 overflow-y-auto">
-                <ChatBox messages={messages} meId={meId} />
-              </div>
-              <div className="border-t border-(--border) mt-0">
-                <Composer onSend={handleSend} />
-              </div>
+          <div className="flex-1 min-h-0 flex flex-col bg-white">
+            <div className="flex-1 overflow-y-auto">
+              <ChatBox messages={messages} meId={meId} isGroup={mode === "group"} />
             </div>
-          )}
+            <div className="border-t border-gray-200">
+              <Composer onSend={handleSend} />
+            </div>
+          </div>
         </div>
       </div>
     </div>

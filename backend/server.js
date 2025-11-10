@@ -10,12 +10,11 @@ import friendRoutes from "./routes/friendRoutes.js";
 import groupRoutes from "./routes/groupRoutes.js";
 import { setupSocket } from "./socket/socket.js";
 
+await connectDB();
+
 const app = express();
 const server = http.createServer(app);
-const PORT = process.env.PORT || 5001;
 const CLIENT = process.env.CLIENT_ORIGIN || "http://localhost:5173";
-
-await connectDB();
 
 app.use(cors({ origin: CLIENT, credentials: true }));
 app.use(express.json({ limit: "10mb" }));
@@ -30,7 +29,7 @@ app.use("/api/groups", groupRoutes);
 const io = new Server(server, { cors: { origin: CLIENT, credentials: true } });
 setupSocket(io);
 
+const PORT = process.env.PORT || 5001;
 server.listen(PORT, () => {
-  console.log(`✅ Using DB: ${process.env.MONGO_URI?.split("/").pop() || "chatapp"}`);
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`Server running on http://localhost:${PORT}`);
 });

@@ -15,19 +15,11 @@ export function SocketProvider({ children }) {
     const s = io(SOCKET_URL, {
       transports: ["websocket", "polling"],
       withCredentials: true,
-      auth: { token, userId: String(user.id || user._id) },
-      reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 500,
+      auth: { token, userId: String(user.id || user._id) }
     });
-    s.on("connect", () => {
-      s.emit("join", String(user.id || user._id));
-    });
+    s.on("connect", () => s.emit("join", String(user.id || user._id)));
     setSocket(s);
-    return () => {
-      s.close();
-      setSocket(null);
-    };
+    return () => { s.close(); setSocket(null); };
   }, [token, user]);
 
   return <SocketContext.Provider value={socket}>{children}</SocketContext.Provider>;

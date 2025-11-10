@@ -10,4 +10,4 @@ const groupMessageSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-export default mongoose.models.GroupMessage || mongoose.model("GroupMessage", groupMessageSchema);
+export default mongoose.model("GroupMessage", groupMessageSchema);

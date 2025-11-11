@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import { io } from "socket.io-client";
 import { SOCKET_URL } from "../constants.js";
 import { useAuth } from "./AuthContext.jsx";
@@ -8,19 +8,32 @@ export const useSocket = () => useContext(SocketContext);
 
 export function SocketProvider({ children }) {
   const { token, user } = useAuth();
-  const [socket, setSocket] = useState(null);
+  const userId = String(user?.id || user?._id || "");
+  const sockRef = useRef(null);
+
+  const socket = useMemo(() => {
+    if (!token || !userId) return null;
+    const s = io(SOCKET_URL, {
+      transports: ["websocket"],
+      withCredentials: true,
+      auth: { token, userId }
+    });
+    sockRef.current = s;
+    return s;
+  }, [token, userId]);
 
   useEffect(() => {
-    if (!token || !user) return;
-    const s = io(SOCKET_URL, {
-      transports: ["websocket", "polling"],
-      withCredentials: true,
-      auth: { token, userId: String(user.id || user._id) }
+    const s = socket;
+    if (!s) return;
+    s.on("connect", () => {
+      s.emit("auth", { userId, token });
+      s.emit("join", userId);
     });
-    s.on("connect", () => s.emit("join", String(user.id || user._id)));
-    setSocket(s);
-    return () => { s.close(); setSocket(null); };
-  }, [token, user]);
+    return () => {
+      try { s.disconnect(); } catch {}
+      sockRef.current = null;
+    };
+  }, [socket, userId, token]);
 
   return <SocketContext.Provider value={socket}>{children}</SocketContext.Provider>;
 }

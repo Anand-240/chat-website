@@ -8,7 +8,7 @@ import Navbar from "./components/Navbar.jsx";
 import VideoCall from "./components/VideoCall.jsx";
 
 export default function App() {
-  const { token } = useAuth();
+  const { token, user, logout } = useAuth();
   const [view, setView] = useState("chat");
   const [authView, setAuthView] = useState("login");
 
@@ -23,7 +23,12 @@ export default function App() {
   return (
     <div className="h-screen w-screen flex flex-col bg-white">
       <VideoCall />
-      <Navbar onGoChat={() => setView("chat")} onGoProfile={() => setView("profile")} />
+      <Navbar
+        username={user?.username}
+        onGoChat={() => setView("chat")}
+        onGoProfile={() => setView("profile")}
+        onLogout={() => { if (typeof logout === "function") logout(); }}
+      />
       <div className="flex-1 min-h-0">
         {view === "chat" ? (
           <Chat />

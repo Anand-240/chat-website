@@ -32,7 +32,13 @@ export default function Chat() {
         const mapped = (data || [])
           .map((x) => {
             const other = (x.participants || []).find((p) => String(p._id) !== String(meId)) || {};
-            return { type: "dm", id: String(other._id || ""), username: other.username || "", email: other.email || "", ts: new Date(x.updatedAt || Date.now()).getTime() };
+            return {
+              type: "dm",
+              id: String(other._id || ""),
+              username: other.username || "",
+              email: other.email || "",
+              ts: new Date(x.updatedAt || Date.now()).getTime()
+            };
           })
           .filter((r) => r.id);
         setConvos(mapped);
@@ -51,16 +57,14 @@ export default function Chat() {
       if (mode !== "dm") return;
       const other = String(msg.sender) === meId ? String(msg.receiver) : String(msg.sender);
       if (String(activeId) !== String(other)) return;
-      setMessages((prev) => (prev.some((p) => p._id === msg._id || p._clientId === msg._clientId) ? prev : [...prev, msg]));
+      setMessages((prev) => (prev.some((p) => (p._id && msg._id && p._id === msg._id) || (p._clientId && msg._clientId && p._clientId === msg._clientId)) ? prev : [...prev, normalizeDM(msg)]));
     };
 
     const onGroup = (msg) => {
       if (mode !== "group") return;
       if (String(activeId) !== String(msg.group)) return;
-      const senderId = typeof msg.sender === "object" ? String(msg.sender._id) : String(msg.sender);
-      const senderName = typeof msg.sender === "object" ? msg.sender.username : msg.senderName || "Unknown";
-      const normalized = { ...msg, sender: senderId, senderName };
-      setMessages((prev) => (prev.some((p) => p._id === normalized._id || p._clientId === normalized._clientId) ? prev : [...prev, normalized]));
+      const normalized = normalizeGroupMessage(msg);
+      setMessages((prev) => (prev.some((p) => (p._id && normalized._id && p._id === normalized._id) || (p._clientId && normalized._clientId && p._clientId === normalized._clientId)) ? prev : [...prev, normalized]));
     };
 
     socket.on("new_message", onDM);
@@ -79,18 +83,13 @@ export default function Chat() {
       try {
         if (mode === "dm") {
           const [chatRes, userRes] = await Promise.all([api(token).get(`/chat/${activeId}`), api(token).get(`/chat/user/${activeId}`)]);
-          setMessages(chatRes.data || []);
+          setMessages((chatRes.data || []).map(normalizeDM));
           setPeerInfo(userRes.data || null);
         } else {
           socket?.emit("join_group", { groupId: activeId, userId: meId });
           const [metaRes, msgsRes] = await Promise.all([api(token).get(`/groups/${activeId}`), api(token).get(`/groups/${activeId}/messages`)]);
-          const msgsWithNames = (msgsRes.data || []).map((m) => {
-            const senderId = typeof m.sender === "object" ? String(m.sender._id) : String(m.sender);
-            const senderName = typeof m.sender === "object" ? m.sender.username : m.senderName || "Unknown";
-            return { ...m, sender: senderId, senderName };
-          });
           setPeerInfo(metaRes.data || null);
-          setMessages(msgsWithNames);
+          setMessages((msgsRes.data || []).map(normalizeGroupMessage));
         }
       } catch {
         setMessages([]);
@@ -111,18 +110,16 @@ export default function Chat() {
       imageUrl = up.data.url;
     }
     if (!text && !imageUrl) return;
-
     const now = new Date();
     const _clientId = cid();
-
     if (mode === "dm") {
       const optimistic = { _clientId, _id: _clientId, sender: meId, receiver: activeId, text: text || "", imageUrl: imageUrl || "", createdAt: now.toISOString() };
-      setMessages((p) => [...p, optimistic]);
-      await api(token).post(`/chat/${activeId}`, { text, imageUrl, _clientId });
+      setMessages((p) => [...p, normalizeDM(optimistic)]);
+      socket?.emit("send_message", { senderId: meId, receiverId: activeId, text, imageUrl, _clientId });
     } else {
       const optimistic = { _clientId, _id: _clientId, sender: meId, senderName: user.username, group: activeId, text: text || "", imageUrl: imageUrl || "", createdAt: now.toISOString() };
-      setMessages((p) => [...p, optimistic]);
-      await api(token).post(`/groups/${activeId}/messages`, { text, imageUrl, _clientId, senderName: user.username });
+      setMessages((p) => [...p, normalizeGroupMessage(optimistic)]);
+      socket?.emit("send_group_message", { senderId: meId, groupId: activeId, text, imageUrl, _clientId, senderName: user.username });
     }
   }
 
@@ -153,9 +150,7 @@ export default function Chat() {
             </div>
             <div className="flex items-center gap-2">
               {mode === "dm" && activeId && (
-                <button onClick={() => startCall(activeId)} className="px-3 py-1.5 rounded-md bg-indigo-600 text-white text-sm">
-                  Video Call
-                </button>
+                <button onClick={() => startCall(activeId)} className="px-3 py-1.5 rounded-md bg-indigo-600 text-white text-sm">Video Call</button>
               )}
             </div>
           </div>
@@ -171,4 +166,32 @@ export default function Chat() {
       </div>
     </div>
   );
+}
+
+function normalizeDM(m) {
+  const msg = { ...m };
+  msg._id = msg._id || msg._clientId || cid();
+  msg.sender = msg.sender && typeof msg.sender === "object" ? String(msg.sender._id || msg.sender) : String(msg.sender || "");
+  msg.receiver = msg.receiver && typeof msg.receiver === "object" ? String(msg.receiver._id || msg.receiver) : String(msg.receiver || "");
+  msg.text = msg.text || "";
+  msg.imageUrl = msg.imageUrl || "";
+  msg.createdAt = msg.createdAt || new Date().toISOString();
+  return msg;
+}
+
+function normalizeGroupMessage(m) {
+  const msg = { ...m };
+  msg._id = msg._id || msg._clientId || cid();
+  msg.group = String(msg.group || msg.groupId || "");
+  if (typeof msg.sender === "object") {
+    msg.sender = String(msg.sender._id || msg.sender);
+    msg.senderName = msg.senderName || msg.sender?.username || (m.sender && m.sender.username) || "";
+  } else {
+    msg.sender = String(msg.sender || "");
+    msg.senderName = msg.senderName || "";
+  }
+  msg.text = msg.text || "";
+  msg.imageUrl = msg.imageUrl || "";
+  msg.createdAt = msg.createdAt || new Date().toISOString();
+  return msg;
 }

@@ -19,6 +19,7 @@ export function CallProvider({ children }) {
   const remoteRef = useRef(null);
   const localStreamRef = useRef(null);
   const pendingIceRef = useRef([]);
+  const remoteStreamRef = useRef(null);
 
   useEffect(() => {
     stateRef.current = state;
@@ -153,6 +154,7 @@ export function CallProvider({ children }) {
     try {
       if (localRef.current) localRef.current.srcObject = null;
     } catch {}
+    remoteStreamRef.current = null;
   }
 
   function stopLocalResources() {
@@ -225,6 +227,14 @@ export function CallProvider({ children }) {
       rtcpMuxPolicy: "require"
     });
 
+    try {
+      pc.addTransceiver("audio", { direction: "sendrecv" });
+      pc.addTransceiver("video", { direction: "sendrecv" });
+      console.log("🎬 [PC] Transceivers added for audio/video sendrecv");
+    } catch (e) {
+      console.warn("⚠️ [PC] Failed to add transceivers:", e);
+    }
+
     pc.onconnectionstatechange = () => {
       console.log(`🔷 [PC] Connection state: ${pc.connectionState}`);
       if (pc.connectionState === "failed") {
@@ -251,8 +261,22 @@ export function CallProvider({ children }) {
 
     pc.ontrack = (e) => {
       console.log(`🔷 [PC] Track received:`, e.track.kind);
-      const stream = e.streams?.[0];
+      const incomingStream = e.streams?.[0] || e.track?.kind && remoteStreamRef.current;
+      if (!remoteStreamRef.current) {
+        remoteStreamRef.current = new MediaStream();
+      }
+
+      if (e.track) {
+        try {
+          remoteStreamRef.current.addTrack(e.track);
+        } catch (err) {
+          console.warn("⚠️ [PC] Could not add remote track to stream:", err);
+        }
+      }
+
+      const stream = e.streams?.[0] || remoteStreamRef.current || incomingStream;
       if (remoteRef.current && stream) {
+        remoteRef.current.muted = true;
         attachStreamToVideo(remoteRef.current, stream);
       }
     };

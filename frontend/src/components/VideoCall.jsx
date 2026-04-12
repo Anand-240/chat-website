@@ -46,7 +46,7 @@ export default function VideoCall() {
           <div className="text-sm text-gray-600">{state.incoming.displayName || "User"}</div>
           <div className="flex gap-3">
             <button onClick={acceptCall} className="flex-1 bg-green-600 text-white rounded-md py-2">Accept</button>
-            <button onClick={endCall} className="flex-1 bg-gray-200 rounded-md py-2">Decline</button>
+            <button onClick={() => endCall()} className="flex-1 bg-gray-200 rounded-md py-2">Decline</button>
           </div>
         </div>
       ) : (
@@ -71,7 +71,7 @@ export default function VideoCall() {
             <button onClick={toggleCam} className={`px-4 py-2 rounded-full ${camOn ? "bg-white text-black" : "bg-gray-600 text-white"}`}>
               {camOn ? "Cam On" : "Cam Off"}
             </button>
-            <button onClick={endCall} className="px-5 py-2 rounded-full bg-red-600 text-white">End</button>
+            <button onClick={() => endCall()} className="px-5 py-2 rounded-full bg-red-600 text-white">End</button>
           </div>
           <div className="absolute top-3 left-4 text-white/90 text-sm">{title}</div>
         </div>

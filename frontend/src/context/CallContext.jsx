@@ -18,6 +18,7 @@ export function CallProvider({ children }) {
   const localRef = useRef(null);
   const remoteRef = useRef(null);
   const localStreamRef = useRef(null);
+  const pendingIceRef = useRef([]);
 
   useEffect(() => {
     stateRef.current = state;
@@ -62,7 +63,13 @@ export function CallProvider({ children }) {
         return;
       }
       if (pcRef.current && answer) {
-        try { await pcRef.current.setRemoteDescription(answer); console.log("✅ [Answer] Processed"); } catch (e) { console.error("❌ [Answer] Failed:", e); }
+        try {
+          await pcRef.current.setRemoteDescription(answer);
+          await flushPendingIceCandidates(pcRef.current, "Answer");
+          console.log("✅ [Answer] Processed");
+        } catch (e) {
+          console.error("❌ [Answer] Failed:", e);
+        }
       }
     };
     const onIce = async ({ candidate, callId }) => {
@@ -70,6 +77,11 @@ export function CallProvider({ children }) {
       const currentCallId = String(stateRef.current.callId || "");
       if (!currentCallId || String(callId || "") !== currentCallId) return;
       if (pcRef.current && candidate) {
+        if (!pcRef.current.remoteDescription) {
+          pendingIceRef.current.push(candidate);
+          console.log(`🧊 [ICE] Queued candidate, waiting remote description (${pendingIceRef.current.length})`);
+          return;
+        }
         try { 
           await pcRef.current.addIceCandidate(candidate);
           console.log("✅ [ICE] Candidate added");
@@ -147,6 +159,7 @@ export function CallProvider({ children }) {
     try { pcRef.current?.getSenders().forEach((s) => s.track?.stop()); } catch {}
     try { pcRef.current?.close(); } catch {}
     pcRef.current = null;
+    pendingIceRef.current = [];
     clearMediaElements();
     localStreamRef.current = null;
   }
@@ -184,6 +197,9 @@ export function CallProvider({ children }) {
     if (!stream) {
       throw new Error("Unable to access camera or microphone");
     }
+
+    stream.getAudioTracks().forEach((t) => { t.enabled = true; });
+    stream.getVideoTracks().forEach((t) => { t.enabled = true; });
 
     localStreamRef.current = stream;
     if (localRef.current) {
@@ -244,6 +260,7 @@ export function CallProvider({ children }) {
     try {
       const stream = await ensureLocalStream();
       stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+      console.log(`📹 [PC] Local tracks:`, stream.getTracks().map((t) => `${t.kind}:${t.readyState}:${t.enabled}`));
       console.log(`✅ [PC] Local tracks added`);
     } catch (e) {
       console.error("❌ [PC] Failed to add tracks:", e);
@@ -280,6 +297,23 @@ export function CallProvider({ children }) {
         pc.addEventListener("icegatheringstatechange", onGatheringChange);
       }
     });
+  }
+
+  async function flushPendingIceCandidates(pc, phase) {
+    if (!pc || !pc.remoteDescription) return;
+    if (!pendingIceRef.current.length) return;
+
+    const queued = [...pendingIceRef.current];
+    pendingIceRef.current = [];
+    console.log(`🧊 [${phase}] Flushing queued ICE: ${queued.length}`);
+
+    for (const candidate of queued) {
+      try {
+        await pc.addIceCandidate(candidate);
+      } catch (e) {
+        console.error(`❌ [${phase}] Failed queued ICE add:`, e);
+      }
+    }
   }
 
   async function startCall(toId) {
@@ -343,6 +377,7 @@ export function CallProvider({ children }) {
       const pc = await createPC(toId, callId);
       console.log(`👍 [AcceptCall] Setting remote description...`);
       await pc.setRemoteDescription(incoming.offer);
+      await flushPendingIceCandidates(pc, "AcceptCall");
       console.log(`👍 [AcceptCall] Creating answer...`);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
@@ -364,6 +399,7 @@ export function CallProvider({ children }) {
   }
 
   function endCall(sendSignal = true) {
+    if (typeof sendSignal !== "boolean") sendSignal = true;
     console.log(`🔴 [EndCall] Ending call, sendSignal: ${sendSignal}`);
     const snapshot = stateRef.current;
     const to = snapshot.peer || snapshot.incoming?.from;

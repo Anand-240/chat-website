@@ -39,7 +39,7 @@ export default function VideoCall() {
   }
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center">
       {state.incoming && !state.active ? (
         <div className="bg-white rounded-xl p-6 w-80 space-y-4 text-center">
           <div className="text-lg font-semibold">{title}</div>

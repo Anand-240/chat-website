@@ -84,6 +84,23 @@ export function CallProvider({ children }) {
     document.addEventListener("visibilitychange", onVisible, { once: true });
   }
 
+  function clearMediaElements() {
+    try {
+      if (remoteRef.current) remoteRef.current.srcObject = null;
+    } catch {}
+    try {
+      if (localRef.current) localRef.current.srcObject = null;
+    } catch {}
+  }
+
+  function stopLocalResources() {
+    try { pcRef.current?.getSenders().forEach((s) => s.track?.stop()); } catch {}
+    try { pcRef.current?.close(); } catch {}
+    pcRef.current = null;
+    clearMediaElements();
+    localStreamRef.current = null;
+  }
+
   useEffect(() => {
     if (localRef.current && localStreamRef.current) {
       const v = localRef.current;
@@ -94,10 +111,25 @@ export function CallProvider({ children }) {
 
   async function ensureLocalStream() {
     if (localStreamRef.current) return localStreamRef.current;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }
-    });
+
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+    } catch {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch {
+        stream = null;
+      }
+    }
+
+    if (!stream) {
+      throw new Error("Unable to access camera or microphone");
+    }
+
     localStreamRef.current = stream;
     if (localRef.current) {
       localRef.current.muted = true;
@@ -153,7 +185,9 @@ export function CallProvider({ children }) {
       socket?.emit("call:answer", { to: toId, from: meId, answer });
       setState({ active: true, incoming: null, peer: toId });
     } catch {
-      endCall();
+      console.error("Failed to accept call");
+      stopLocalResources();
+      setState((prev) => ({ active: false, incoming: prev.incoming || state.incoming, peer: "" }));
     }
   }
 
@@ -162,17 +196,7 @@ export function CallProvider({ children }) {
     if (to) {
       try { socket?.emit("call:end", { to: String(to), from: meId }); } catch {}
     }
-    try { pcRef.current?.getSenders().forEach((s) => s.track?.stop()); } catch {}
-    try { pcRef.current?.close(); } catch {}
-    pcRef.current = null;
-
-    try {
-      if (remoteRef.current) remoteRef.current.srcObject = null;
-    } catch {}
-    try {
-      if (localRef.current) localRef.current.srcObject = null;
-    } catch {}
-    localStreamRef.current = null;
+    stopLocalResources();
 
     setState({ active: false, incoming: null, peer: "" });
   }

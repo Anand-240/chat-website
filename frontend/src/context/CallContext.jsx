@@ -10,11 +10,18 @@ export function CallProvider({ children }) {
   const { user } = useAuth();
   const meId = String(user?.id || user?._id || "");
   const [state, setState] = useState({ active: false, incoming: null, peer: "", callId: "" });
+  const stateRef = useRef({ active: false, incoming: null, peer: "", callId: "" });
+  const startLockRef = useRef(false);
+  const acceptLockRef = useRef(false);
 
   const pcRef = useRef(null);
   const localRef = useRef(null);
   const remoteRef = useRef(null);
   const localStreamRef = useRef(null);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     console.log("🔵 [CallProvider] Mounted, meId:", meId);
@@ -36,17 +43,33 @@ export function CallProvider({ children }) {
     const onOffer = ({ from, offer, displayName, callId }) => {
       console.log("📞 [Offer received] from:", from, "callId:", callId);
       const nextCallId = String(callId || "");
+      if (!nextCallId) {
+        console.warn("⚠️ [Offer] Ignored - missing callId");
+        return;
+      }
+      if (stateRef.current.active || stateRef.current.incoming || pcRef.current) {
+        console.warn("⚠️ [Offer] Ignored - already busy in another call");
+        try { socket.emit("call:busy", { to: String(from), from: meId }); } catch {}
+        return;
+      }
       setState({ active: false, incoming: { from, offer, displayName, callId: nextCallId }, peer: "", callId: nextCallId });
     };
     const onAnswer = async ({ answer, callId }) => {
       console.log("📞 [Answer received] callId:", callId, "pcRef exists:", !!pcRef.current);
-      if (pcRef.current && answer && (!state.callId || String(callId || "") === state.callId)) {
+      const currentCallId = String(stateRef.current.callId || "");
+      if (!currentCallId || String(callId || "") !== currentCallId) {
+        console.warn("⚠️ [Answer] Ignored stale/foreign answer");
+        return;
+      }
+      if (pcRef.current && answer) {
         try { await pcRef.current.setRemoteDescription(answer); console.log("✅ [Answer] Processed"); } catch (e) { console.error("❌ [Answer] Failed:", e); }
       }
     };
     const onIce = async ({ candidate, callId }) => {
       console.log("📞 [ICE received] callId:", callId);
-      if (pcRef.current && candidate && (!state.callId || String(callId || "") === state.callId)) {
+      const currentCallId = String(stateRef.current.callId || "");
+      if (!currentCallId || String(callId || "") !== currentCallId) return;
+      if (pcRef.current && candidate) {
         try { 
           await pcRef.current.addIceCandidate(candidate);
           console.log("✅ [ICE] Candidate added");
@@ -57,7 +80,12 @@ export function CallProvider({ children }) {
     };
     const onEnd = ({ callId }) => {
       console.log("📞 [Call end received] callId:", callId);
-      if (!state.callId || String(callId || "") === state.callId) endCall(false);
+      const currentCallId = String(stateRef.current.callId || "");
+      if (!callId || !currentCallId) {
+        console.warn("⚠️ [Call end] Ignored - missing callId context");
+        return;
+      }
+      if (String(callId) === currentCallId) endCall(false);
     };
 
     socket.on("call:offer", onOffer);
@@ -74,7 +102,7 @@ export function CallProvider({ children }) {
       socket.off("call:ice", onIce);
       socket.off("call:end", onEnd);
     };
-  }, [socket, state.callId]);
+  }, [socket, meId]);
 
   function attachStreamToVideo(video, stream) {
     if (!video || !stream) return;
@@ -226,12 +254,49 @@ export function CallProvider({ children }) {
     return pc;
   }
 
+  async function waitForIceGathering(pc, phase) {
+    await new Promise((resolve) => {
+      let done = false;
+      const finish = (message) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timeout);
+        pc.removeEventListener("icegatheringstatechange", onGatheringChange);
+        console.log(message);
+        resolve();
+      };
+      const onGatheringChange = () => {
+        if (pc.iceGatheringState === "complete") {
+          finish(`✅ [${phase}] ICE gathering ready`);
+        }
+      };
+      const timeout = setTimeout(() => {
+        finish(`⏱️  [${phase}] ICE gathering timeout, continuing`);
+      }, 2000);
+
+      if (pc.iceGatheringState === "complete") {
+        finish(`✅ [${phase}] ICE gathering ready`);
+      } else {
+        pc.addEventListener("icegatheringstatechange", onGatheringChange);
+      }
+    });
+  }
+
   async function startCall(toId) {
     console.log("📞 [StartCall] Initiating call to:", toId);
+    if (startLockRef.current) {
+      console.warn("⚠️ [StartCall] Ignored duplicate start while previous is in progress");
+      return;
+    }
+    if (stateRef.current.active || stateRef.current.incoming || pcRef.current) {
+      console.warn("⚠️ [StartCall] Ignored - already in call state");
+      return;
+    }
     if (!toId || !meId) {
       console.error("❌ [StartCall] Missing toId or meId");
       return;
     }
+    startLockRef.current = true;
     
     const callId = crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     console.log(`📞 [StartCall] callId: ${callId}`);
@@ -243,26 +308,7 @@ export function CallProvider({ children }) {
       await pc.setLocalDescription(offer);
       console.log(`📞 [StartCall] Local description set`);
       
-      await new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          console.log(`⏱️  [StartCall] ICE gathering timeout, sending offer`);
-          resolve();
-        }, 2000);
-        
-        if (pc.iceGatheringState === "complete") {
-          clearTimeout(timeout);
-          console.log(`✅ [StartCall] ICE gathering ready`);
-          resolve();
-        } else {
-          pc.onicegatheringstatechange = () => {
-            if (pc.iceGatheringState === "complete") {
-              clearTimeout(timeout);
-              console.log(`✅ [StartCall] ICE gathering ready`);
-              resolve();
-            }
-          };
-        }
-      });
+      await waitForIceGathering(pc, "StartCall");
       
       console.log(`📞 [StartCall] Emitting offer`);
       socket?.emit("call:offer", { to: String(toId), from: meId, offer, displayName: user?.username || "User", callId });
@@ -271,49 +317,38 @@ export function CallProvider({ children }) {
     } catch (err) {
       console.error("❌ [StartCall] Failed:", err);
       endCall();
+    } finally {
+      startLockRef.current = false;
     }
   }
 
   async function acceptCall() {
     console.log("👍 [AcceptCall] User accepting call");
-    if (!state.incoming) {
+    if (acceptLockRef.current) {
+      console.warn("⚠️ [AcceptCall] Ignored duplicate accept while previous is in progress");
+      return;
+    }
+    const incoming = stateRef.current.incoming;
+    if (!incoming) {
       console.error("❌ [AcceptCall] No incoming call");
       return;
     }
+    acceptLockRef.current = true;
     
-    const toId = String(state.incoming.from);
-    const callId = String(state.incoming.callId || state.callId || "");
+    const toId = String(incoming.from);
+    const callId = String(incoming.callId || stateRef.current.callId || "");
     console.log(`👍 [AcceptCall] callId: ${callId}, from: ${toId}`);
     
     try {
       const pc = await createPC(toId, callId);
       console.log(`👍 [AcceptCall] Setting remote description...`);
-      await pc.setRemoteDescription(state.incoming.offer);
+      await pc.setRemoteDescription(incoming.offer);
       console.log(`👍 [AcceptCall] Creating answer...`);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       console.log(`👍 [AcceptCall] Local description set`);
-      
-      await new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          console.log(`⏱️  [AcceptCall] ICE gathering timeout, sending answer`);
-          resolve();
-        }, 2000);
-        
-        if (pc.iceGatheringState === "complete") {
-          clearTimeout(timeout);
-          console.log(`✅ [AcceptCall] ICE gathering ready`);
-          resolve();
-        } else {
-          pc.onicegatheringstatechange = () => {
-            if (pc.iceGatheringState === "complete") {
-              clearTimeout(timeout);
-              console.log(`✅ [AcceptCall] ICE gathering ready`);
-              resolve();
-            }
-          };
-        }
-      });
+
+      await waitForIceGathering(pc, "AcceptCall");
       
       console.log(`👍 [AcceptCall] Emitting answer`);
       socket?.emit("call:answer", { to: toId, from: meId, answer, callId });
@@ -322,22 +357,28 @@ export function CallProvider({ children }) {
     } catch (err) {
       console.error("❌ [AcceptCall] Failed:", err);
       stopLocalResources();
-      setState((prev) => ({ active: false, incoming: prev.incoming || state.incoming, peer: "", callId: prev.callId || state.callId || "" }));
+      setState((prev) => ({ active: false, incoming: prev.incoming || incoming, peer: "", callId: prev.callId || stateRef.current.callId || "" }));
+    } finally {
+      acceptLockRef.current = false;
     }
   }
 
   function endCall(sendSignal = true) {
     console.log(`🔴 [EndCall] Ending call, sendSignal: ${sendSignal}`);
-    const to = state.peer || state.incoming?.from;
+    const snapshot = stateRef.current;
+    const to = snapshot.peer || snapshot.incoming?.from;
+    const currentCallId = snapshot.callId || snapshot.incoming?.callId || "";
     if (to) {
       try { 
         if (sendSignal) {
-          socket?.emit("call:end", { to: String(to), from: meId, callId: state.callId || state.incoming?.callId || "" }); 
+          socket?.emit("call:end", { to: String(to), from: meId, callId: currentCallId }); 
           console.log(`🔴 [EndCall] End signal sent`);
         }
       } catch (e) { console.error("❌ [EndCall] Signal failed:", e); }
     }
     stopLocalResources();
+    startLockRef.current = false;
+    acceptLockRef.current = false;
     setState({ active: false, incoming: null, peer: "", callId: "" });
     console.log(`✅ [EndCall] Call ended`);
   }

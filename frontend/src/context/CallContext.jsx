@@ -142,11 +142,40 @@ export function CallProvider({ children }) {
   }
 
   async function createPC(toId, callId) {
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    const iceServers = [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" },
+      { urls: ["turn:openrelay.metered.ca:80"], username: "openrelayproject", credential: "openrelayproject" },
+      { urls: ["turn:openrelay.metered.ca:443"], username: "openrelayproject", credential: "openrelayproject" }
+    ];
+    
+    const pc = new RTCPeerConnection({ 
+      iceServers,
+      bundlePolicy: "max-bundle",
+      rtcpMuxPolicy: "require"
+    });
+
+    pc.onconnectionstatechange = () => {
+      console.log(`[${callId}] Connection state: ${pc.connectionState}`);
+      if (pc.connectionState === "failed") {
+        console.error(`[${callId}] Connection failed. ICE state: ${pc.iceConnectionState}`);
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[${callId}] ICE connection state: ${pc.iceConnectionState}`);
+    };
+
+    pc.onicegatheringstatechange = () => {
+      console.log(`[${callId}] ICE gathering state: ${pc.iceGatheringState}`);
+    };
 
     pc.onicecandidate = (e) => {
       if (e.candidate) {
         try { socket?.emit("call:ice", { to: toId, from: meId, candidate: e.candidate, callId }); } catch {}
+      } else {
+        console.log(`[${callId}] ICE gathering complete`);
       }
     };
 
@@ -171,9 +200,31 @@ export function CallProvider({ children }) {
       const pc = await createPC(toId, callId);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      
+      // Wait for ICE gathering to complete or timeout after 2 seconds
+      await new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          console.log(`[${callId}] ICE gathering timeout, sending offer with current candidates`);
+          resolve();
+        }, 2000);
+        
+        if (pc.iceGatheringState === "complete") {
+          clearTimeout(timeout);
+          resolve();
+        } else {
+          pc.onicegatheringstatechange = () => {
+            if (pc.iceGatheringState === "complete") {
+              clearTimeout(timeout);
+              resolve();
+            }
+          };
+        }
+      });
+      
       socket?.emit("call:offer", { to: String(toId), from: meId, offer, displayName: user?.username || "User", callId });
       setState({ active: true, incoming: null, peer: String(toId), callId });
-    } catch {
+    } catch (err) {
+      console.error("Failed to start call:", err);
       endCall();
     }
   }
@@ -187,10 +238,31 @@ export function CallProvider({ children }) {
       await pc.setRemoteDescription(state.incoming.offer);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      
+      // Wait for ICE gathering to complete or timeout after 2 seconds
+      await new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          console.log(`[${callId}] ICE gathering timeout, sending answer with current candidates`);
+          resolve();
+        }, 2000);
+        
+        if (pc.iceGatheringState === "complete") {
+          clearTimeout(timeout);
+          resolve();
+        } else {
+          pc.onicegatheringstatechange = () => {
+            if (pc.iceGatheringState === "complete") {
+              clearTimeout(timeout);
+              resolve();
+            }
+          };
+        }
+      });
+      
       socket?.emit("call:answer", { to: toId, from: meId, answer, callId });
       setState({ active: true, incoming: null, peer: toId, callId });
-    } catch {
-      console.error("Failed to accept call");
+    } catch (err) {
+      console.error("Failed to accept call:", err);
       stopLocalResources();
       setState((prev) => ({ active: false, incoming: prev.incoming || state.incoming, peer: "", callId: prev.callId || state.callId || "" }));
     }

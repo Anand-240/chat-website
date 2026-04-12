@@ -43,5 +43,6 @@ setupSocket(io);
 
 const PORT = process.env.PORT || 5001;
 server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`🔌 Socket.IO configured for origins:`, CLIENT_ORIGINS);
 });

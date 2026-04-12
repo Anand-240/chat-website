@@ -6,11 +6,15 @@ import Group from "../models/groupModel.js";
 const online = new Map();
 
 export function setupSocket(io) {
+  console.log("🔌 [Socket Setup] Initializing socket handlers");
+  
   io.on("connection", (socket) => {
+    console.log("✅ [Socket] New connection:", socket.id);
     const uid = socket.handshake.auth?.userId;
     if (uid) {
       online.set(String(uid), socket.id);
       socket.data.userId = String(uid);
+      console.log("📍 [Socket] User online:", uid);
     }
 
     socket.on("auth", ({ userId }) => {
@@ -93,6 +97,7 @@ export function setupSocket(io) {
     });
 
     socket.on("disconnect", () => {
+      console.log("⚠️  [Socket] User disconnected:", socket.id);
       for (const [k, v] of online.entries()) {
         if (v === socket.id) online.delete(k);
       }

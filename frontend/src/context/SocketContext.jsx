@@ -12,7 +12,11 @@ export function SocketProvider({ children }) {
   const sockRef = useRef(null);
 
   const socket = useMemo(() => {
-    if (!token || !userId) return null;
+    if (!token || !userId) {
+      console.log("🔌 [Socket] Skipped - missing token or userId:", { token: !!token, userId: !!userId });
+      return null;
+    }
+    console.log("🔌 [Socket] Creating socket connection to:", SOCKET_URL);
     const s = io(SOCKET_URL, {
       transports: ["websocket"],
       withCredentials: true,
@@ -25,11 +29,29 @@ export function SocketProvider({ children }) {
   useEffect(() => {
     const s = socket;
     if (!s) return;
+    
+    console.log("🔌 [Socket] Attempting connection to:", SOCKET_URL);
+    
     s.on("connect", () => {
+      console.log("✅ [Socket] Connected successfully");
       s.emit("auth", { userId, token });
       s.emit("join", userId);
     });
+
+    s.on("connect_error", (error) => {
+      console.error("❌ [Socket] Connection error:", error?.message || error);
+    });
+
+    s.on("error", (error) => {
+      console.error("❌ [Socket] Error event:", error);
+    });
+
+    s.on("disconnect", (reason) => {
+      console.warn("⚠️  [Socket] Disconnected:", reason);
+    });
+
     return () => {
+      console.log("🔌 [Socket] Cleaning up listeners");
       try { s.disconnect(); } catch {}
       sockRef.current = null;
     };

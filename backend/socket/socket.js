@@ -66,25 +66,25 @@ export function setupSocket(io) {
       socket.to(String(groupId)).emit("new_group_message", payload);
     });
 
-    socket.on("call:offer", ({ to, from, offer, displayName }) => {
+    socket.on("call:offer", ({ to, from, offer, displayName, callId }) => {
       const sid = online.get(String(to));
-      if (sid) io.to(sid).emit("call:offer", { from, offer, displayName });
+      if (sid) io.to(sid).emit("call:offer", { from, offer, displayName, callId });
       else io.to(socket.id).emit("call:unavailable", { to });
     });
 
-    socket.on("call:answer", ({ to, from, answer }) => {
+    socket.on("call:answer", ({ to, from, answer, callId }) => {
       const sid = online.get(String(to));
-      if (sid) io.to(sid).emit("call:answer", { from, answer });
+      if (sid) io.to(sid).emit("call:answer", { from, answer, callId });
     });
 
-    socket.on("call:ice", ({ to, from, candidate }) => {
+    socket.on("call:ice", ({ to, from, candidate, callId }) => {
       const sid = online.get(String(to));
-      if (sid) io.to(sid).emit("call:ice", { from, candidate });
+      if (sid) io.to(sid).emit("call:ice", { from, candidate, callId });
     });
 
-    socket.on("call:end", ({ to, from }) => {
+    socket.on("call:end", ({ to, from, callId }) => {
       const sid = online.get(String(to));
-      if (sid) io.to(sid).emit("call:end", { from });
+      if (sid) io.to(sid).emit("call:end", { from, callId });
     });
 
     socket.on("call:busy", ({ to, from }) => {

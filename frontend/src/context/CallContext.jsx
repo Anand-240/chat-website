@@ -9,7 +9,7 @@ export function CallProvider({ children }) {
   const socket = useSocket();
   const { user } = useAuth();
   const meId = String(user?.id || user?._id || "");
-  const [state, setState] = useState({ active: false, incoming: null, peer: "" });
+  const [state, setState] = useState({ active: false, incoming: null, peer: "", callId: "" });
 
   const pcRef = useRef(null);
   const localRef = useRef(null);
@@ -26,20 +26,23 @@ export function CallProvider({ children }) {
   useEffect(() => {
     if (!socket) return;
 
-    const onOffer = ({ from, offer, displayName }) => {
-      setState({ active: false, incoming: { from, offer, displayName }, peer: "" });
+    const onOffer = ({ from, offer, displayName, callId }) => {
+      const nextCallId = String(callId || "");
+      setState({ active: false, incoming: { from, offer, displayName, callId: nextCallId }, peer: "", callId: nextCallId });
     };
-    const onAnswer = async ({ answer }) => {
-      if (pcRef.current && answer) {
+    const onAnswer = async ({ answer, callId }) => {
+      if (pcRef.current && answer && (!state.callId || String(callId || "") === state.callId)) {
         try { await pcRef.current.setRemoteDescription(answer); } catch {}
       }
     };
-    const onIce = async ({ candidate }) => {
-      if (pcRef.current && candidate) {
+    const onIce = async ({ candidate, callId }) => {
+      if (pcRef.current && candidate && (!state.callId || String(callId || "") === state.callId)) {
         try { await pcRef.current.addIceCandidate(candidate); } catch {}
       }
     };
-    const onEnd = () => endCall();
+    const onEnd = ({ callId }) => {
+      if (!state.callId || String(callId || "") === state.callId) endCall(false);
+    };
 
     socket.on("call:offer", onOffer);
     socket.on("call:answer", onAnswer);
@@ -52,7 +55,7 @@ export function CallProvider({ children }) {
       socket.off("call:ice", onIce);
       socket.off("call:end", onEnd);
     };
-  }, [socket]);
+  }, [socket, state.callId]);
 
   function attachStreamToVideo(video, stream) {
     if (!video || !stream) return;
@@ -163,12 +166,13 @@ export function CallProvider({ children }) {
 
   async function startCall(toId) {
     if (!toId || !meId) return;
+    const callId = crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     try {
       const pc = await createPC(toId);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      socket?.emit("call:offer", { to: String(toId), from: meId, offer, displayName: user?.username || "User" });
-      setState({ active: true, incoming: null, peer: String(toId) });
+      socket?.emit("call:offer", { to: String(toId), from: meId, offer, displayName: user?.username || "User", callId });
+      setState({ active: true, incoming: null, peer: String(toId), callId });
     } catch {
       endCall();
     }
@@ -177,28 +181,29 @@ export function CallProvider({ children }) {
   async function acceptCall() {
     if (!state.incoming) return;
     const toId = String(state.incoming.from);
+    const callId = String(state.incoming.callId || state.callId || "");
     try {
       const pc = await createPC(toId);
       await pc.setRemoteDescription(state.incoming.offer);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      socket?.emit("call:answer", { to: toId, from: meId, answer });
-      setState({ active: true, incoming: null, peer: toId });
+      socket?.emit("call:answer", { to: toId, from: meId, answer, callId });
+      setState({ active: true, incoming: null, peer: toId, callId });
     } catch {
       console.error("Failed to accept call");
       stopLocalResources();
-      setState((prev) => ({ active: false, incoming: prev.incoming || state.incoming, peer: "" }));
+      setState((prev) => ({ active: false, incoming: prev.incoming || state.incoming, peer: "", callId: prev.callId || state.callId || "" }));
     }
   }
 
-  function endCall() {
+  function endCall(sendSignal = true) {
     const to = state.peer || state.incoming?.from;
     if (to) {
-      try { socket?.emit("call:end", { to: String(to), from: meId }); } catch {}
+      try { if (sendSignal) socket?.emit("call:end", { to: String(to), from: meId, callId: state.callId || state.incoming?.callId || "" }); } catch {}
     }
     stopLocalResources();
 
-    setState({ active: false, incoming: null, peer: "" });
+    setState({ active: false, incoming: null, peer: "", callId: "" });
   }
 
   return (

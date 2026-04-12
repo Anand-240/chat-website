@@ -141,12 +141,12 @@ export function CallProvider({ children }) {
     return stream;
   }
 
-  async function createPC(toId) {
+  async function createPC(toId, callId) {
     const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
 
     pc.onicecandidate = (e) => {
       if (e.candidate) {
-        try { socket?.emit("call:ice", { to: toId, from: meId, candidate: e.candidate }); } catch {}
+        try { socket?.emit("call:ice", { to: toId, from: meId, candidate: e.candidate, callId }); } catch {}
       }
     };
 
@@ -168,7 +168,7 @@ export function CallProvider({ children }) {
     if (!toId || !meId) return;
     const callId = crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     try {
-      const pc = await createPC(toId);
+      const pc = await createPC(toId, callId);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       socket?.emit("call:offer", { to: String(toId), from: meId, offer, displayName: user?.username || "User", callId });
@@ -183,7 +183,7 @@ export function CallProvider({ children }) {
     const toId = String(state.incoming.from);
     const callId = String(state.incoming.callId || state.callId || "");
     try {
-      const pc = await createPC(toId);
+      const pc = await createPC(toId, callId);
       await pc.setRemoteDescription(state.incoming.offer);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);

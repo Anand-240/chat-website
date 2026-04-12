@@ -15,9 +15,19 @@ await connectDB();
 
 const app = express();
 const server = http.createServer(app);
-const CLIENT = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+const CLIENT_ORIGINS = (process.env.CLIENT_ORIGIN || "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
-app.use(cors({ origin: CLIENT, credentials: true }));
+const corsOrigin = (origin, callback) => {
+  // Allow server-to-server and health-check requests that do not send Origin.
+  if (!origin) return callback(null, true);
+  if (CLIENT_ORIGINS.includes(origin)) return callback(null, true);
+  return callback(new Error(`CORS blocked for origin: ${origin}`));
+};
+
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: "10mb" }));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -28,7 +38,7 @@ app.use("/api/friends", friendRoutes);
 app.use("/api/groups", groupRoutes);
 app.use("/api/upload", uploadRoutes);
 
-const io = new Server(server, { cors: { origin: CLIENT, credentials: true } });
+const io = new Server(server, { cors: { origin: CLIENT_ORIGINS, credentials: true } });
 setupSocket(io);
 
 const PORT = process.env.PORT || 5001;

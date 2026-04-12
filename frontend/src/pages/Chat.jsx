@@ -6,7 +6,6 @@ import { api } from "../utils/api.js";
 import Sidebar from "../components/Sidebar.jsx";
 import ChatBox from "../components/ChatBox.jsx";
 import Composer from "../components/Composer.jsx";
-import VideoCall from "../components/VideoCall.jsx";
 
 const isOid = (s) => /^[a-f0-9]{24}$/i.test(String(s || ""));
 const cid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -131,7 +130,6 @@ export default function Chat() {
 
   return (
     <div className="h-screen w-full overflow-hidden bg-white">
-      <VideoCall />
       <div className="grid h-full w-full" style={{ gridTemplateColumns: "340px 1fr" }}>
         <Sidebar
           me={{ username: user?.username, email: user?.email }}

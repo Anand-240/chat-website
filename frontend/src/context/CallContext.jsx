@@ -195,18 +195,18 @@ export function CallProvider({ children }) {
       });
       console.log("✅ [Media] Camera+audio granted");
     } catch (e) {
-      console.warn("⚠️ [Media] Camera failed, trying audio only:", e);
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        console.log("✅ [Media] Audio-only granted");
-      } catch (e2) {
-        console.error("❌ [Media] No media access:", e2);
-        stream = null;
-      }
+      console.error("❌ [Media] Camera+audio request failed:", e);
+      stream = null;
     }
 
     if (!stream) {
-      throw new Error("Unable to access camera or microphone");
+      throw new Error("Unable to access camera and microphone. Please allow camera permission and close other apps using the camera.");
+    }
+
+    const videoTracks = stream.getVideoTracks();
+    if (!videoTracks.length || videoTracks.every((t) => t.readyState !== "live")) {
+      try { stream.getTracks().forEach((t) => t.stop()); } catch {}
+      throw new Error("Camera video track is not available. Re-enable camera permission and retry the call.");
     }
 
     stream.getAudioTracks().forEach((t) => { t.enabled = true; });
@@ -388,6 +388,9 @@ export function CallProvider({ children }) {
       console.log(`✅ [StartCall] Call initiated`);
     } catch (err) {
       console.error("❌ [StartCall] Failed:", err);
+      if (typeof window !== "undefined") {
+        window.alert(err?.message || "Could not start video call. Check camera permission and try again.");
+      }
       endCall();
     } finally {
       startLockRef.current = false;
@@ -434,6 +437,9 @@ export function CallProvider({ children }) {
       console.log(`✅ [AcceptCall] Call accepted`);
     } catch (err) {
       console.error("❌ [AcceptCall] Failed:", err);
+      if (typeof window !== "undefined") {
+        window.alert(err?.message || "Could not join video call. Check camera permission and try again.");
+      }
       stopLocalResources();
       setState((prev) => ({ active: false, incoming: prev.incoming || incoming, peer: "", callId: prev.callId || stateRef.current.callId || "" }));
     } finally {

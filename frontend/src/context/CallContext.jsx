@@ -236,14 +236,6 @@ export function CallProvider({ children }) {
       rtcpMuxPolicy: "require"
     });
 
-    try {
-      pc.addTransceiver("audio", { direction: "sendrecv" });
-      pc.addTransceiver("video", { direction: "sendrecv" });
-      console.log("🎬 [PC] Transceivers added for audio/video sendrecv");
-    } catch (e) {
-      console.warn("⚠️ [PC] Failed to add transceivers:", e);
-    }
-
     pc.onconnectionstatechange = () => {
       console.log(`🔷 [PC] Connection state: ${pc.connectionState}`);
       if (pc.connectionState === "failed") {
@@ -270,21 +262,28 @@ export function CallProvider({ children }) {
 
     pc.ontrack = (e) => {
       console.log(`🔷 [PC] Track received:`, e.track.kind);
-      const incomingStream = e.streams?.[0] || e.track?.kind && remoteStreamRef.current;
-      if (!remoteStreamRef.current) {
-        remoteStreamRef.current = new MediaStream();
-      }
+      const streamFromEvent = e.streams?.[0] || null;
 
-      if (e.track) {
-        try {
-          remoteStreamRef.current.addTrack(e.track);
-        } catch (err) {
-          console.warn("⚠️ [PC] Could not add remote track to stream:", err);
+      // Prefer the stream provided by the browser; it is the most interoperable path.
+      if (streamFromEvent) {
+        remoteStreamRef.current = streamFromEvent;
+      } else {
+        if (!remoteStreamRef.current) {
+          remoteStreamRef.current = new MediaStream();
+        }
+        if (e.track) {
+          try {
+            const exists = remoteStreamRef.current.getTracks().some((t) => t.id === e.track.id);
+            if (!exists) remoteStreamRef.current.addTrack(e.track);
+          } catch (err) {
+            console.warn("⚠️ [PC] Could not add remote track to stream:", err);
+          }
         }
       }
 
-      const stream = e.streams?.[0] || remoteStreamRef.current || incomingStream;
+      const stream = remoteStreamRef.current;
       if (remoteRef.current && stream) {
+        // Muted autoplay is far more reliable on deployed/mobile browsers.
         remoteRef.current.muted = true;
         attachStreamToVideo(remoteRef.current, stream);
       }
@@ -378,7 +377,13 @@ export function CallProvider({ children }) {
       await waitForIceGathering(pc, "StartCall");
       
       console.log(`📞 [StartCall] Emitting offer`);
-      socket?.emit("call:offer", { to: String(toId), from: meId, offer, displayName: user?.username || "User", callId });
+      socket?.emit("call:offer", {
+        to: String(toId),
+        from: meId,
+        offer: pc.localDescription || offer,
+        displayName: user?.username || "User",
+        callId
+      });
       setState({ active: true, incoming: null, peer: String(toId), callId });
       console.log(`✅ [StartCall] Call initiated`);
     } catch (err) {
@@ -419,7 +424,12 @@ export function CallProvider({ children }) {
       await waitForIceGathering(pc, "AcceptCall");
       
       console.log(`👍 [AcceptCall] Emitting answer`);
-      socket?.emit("call:answer", { to: toId, from: meId, answer, callId });
+      socket?.emit("call:answer", {
+        to: toId,
+        from: meId,
+        answer: pc.localDescription || answer,
+        callId
+      });
       setState({ active: true, incoming: null, peer: toId, callId });
       console.log(`✅ [AcceptCall] Call accepted`);
     } catch (err) {

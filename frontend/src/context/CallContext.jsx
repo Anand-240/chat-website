@@ -177,6 +177,15 @@ export function CallProvider({ children }) {
   async function ensureLocalStream() {
     if (localStreamRef.current) return localStreamRef.current;
 
+    if (
+      typeof window !== "undefined" &&
+      !window.isSecureContext &&
+      window.location.hostname !== "localhost" &&
+      window.location.hostname !== "127.0.0.1"
+    ) {
+      throw new Error("Camera/mic requires HTTPS (or localhost). Open the app on HTTPS to place a video call.");
+    }
+
     let stream = null;
     try {
       console.log("🎥 [Media] Requesting camera+audio");
